@@ -684,3 +684,44 @@ export function stitchCroppedTile(
     }
   }
 }
+
+/** Bounding box in input voxel space covering all planned context patches for outputRoi. */
+export function getPlannedTileInputBounds(
+  geometry: InferenceGeometry,
+  outputRoi: VoxelBox,
+  inputBounds: VoxelBox,
+  overlap = true,
+): VoxelBox {
+  const { retained, inputStride, outputStride, counts, outputBounds } =
+    blendedGrid(geometry, inputBounds, overlap);
+  const first = outputRoi.origin.map((start, axis) =>
+    Math.max(
+      0,
+      Math.floor(
+        (start - outputBounds.origin[axis] - retained[axis]) /
+          outputStride[axis],
+      ) + 1,
+    ),
+  );
+  const last = outputRoi.origin.map((start, axis) =>
+    Math.min(
+      counts[axis] - 1,
+      Math.ceil(
+        (start + outputRoi.shape[axis] - outputBounds.origin[axis]) /
+          outputStride[axis],
+      ) - 1,
+    ),
+  );
+  return {
+    origin: [
+      inputBounds.origin[0] + first[0] * inputStride[0],
+      inputBounds.origin[1] + first[1] * inputStride[1],
+      inputBounds.origin[2] + first[2] * inputStride[2],
+    ],
+    shape: [
+      (last[0] - first[0]) * inputStride[0] + geometry.inputShape[0],
+      (last[1] - first[1]) * inputStride[1] + geometry.inputShape[1],
+      (last[2] - first[2]) * inputStride[2] + geometry.inputShape[2],
+    ],
+  };
+}

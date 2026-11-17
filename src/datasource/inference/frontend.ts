@@ -233,14 +233,16 @@ registerPromiseRPC(INFERENCE_TILE_RPC_ID, async function (x, { signal }) {
   signal?.throwIfAborted();
   requireResult(this.get(x.chunkManager), x.resultId);
   // Subscribers may share an in-flight result: transfer a private tile snapshot.
-  const copy = Float32Array.from(data);
+  const copy = data.slice();
   return { value: copy, transfers: [copy.buffer] };
 });
 
 export class InferenceVolumeChunkSource extends WithParameters(
   VolumeChunkSource,
   VolumeSourceParameters,
-) {}
+) {
+  override immediateChunkUpdates = true;
+}
 
 export class InferenceMultiscaleVolumeChunkSource extends MultiscaleVolumeChunkSource {
   // The multiscale base has no lifetime API. Recipe volumes have an explicit

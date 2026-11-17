@@ -16,6 +16,7 @@
 
 /** Runtime-only reconstruction of self-contained inference recipes. */
 import type { GetDataSourceOptions } from "#src/datasource/index.js";
+import { LIVE_INFERENCE_TILE_SHAPE_ZYX } from "#src/datasource/inference/base.js";
 import { publishLiveInference } from "#src/datasource/inference/frontend.js";
 import { OnnxInferenceController } from "#src/inference/controller.js";
 import type { PreparedInferenceInput } from "#src/inference/input.js";
@@ -40,6 +41,46 @@ const contexts = new WeakMap<
   object,
   { root: TopLevelLayerListSpecification; references: number }
 >();
+
+const INITIAL_VIEWPORT_PREFETCH_RADIUS_TILES_YX = 2;
+
+function warmInitialViewportVolume(
+  root: TopLevelLayerListSpecification,
+  input: PreparedInferenceInput,
+  signal: AbortSignal,
+) {
+  if (input.prefetchVolume === undefined || signal.aborted) return;
+  try {
+    const space = root.coordinateSpace.value;
+    const position = root.globalPosition.value;
+    if (!space.valid || position.length < 3) return;
+    const centerZYX = new Array<number>(3);
+    for (let axis = 0; axis < 3; ++axis) {
+      const dim = space.names.indexOf(input.axisNamesZYX[axis]);
+      if (dim < 0 || dim >= position.length) return;
+      const coord = position[dim];
+      const scale = space.scales[dim];
+      const voxelSpacing = input.spacingZYX[axis];
+      if (!Number.isFinite(coord) || !(scale > 0) || !(voxelSpacing > 0)) {
+        return;
+      }
+      centerZYX[axis] = (coord * scale) / voxelSpacing;
+    }
+    const radiusZ = LIVE_INFERENCE_TILE_SHAPE_ZYX[0];
+    const radiusY =
+      LIVE_INFERENCE_TILE_SHAPE_ZYX[1] *
+      INITIAL_VIEWPORT_PREFETCH_RADIUS_TILES_YX;
+    const radiusX =
+      LIVE_INFERENCE_TILE_SHAPE_ZYX[2] *
+      INITIAL_VIEWPORT_PREFETCH_RADIUS_TILES_YX;
+    const radii = [radiusZ, radiusY, radiusX];
+    const origin = centerZYX.map((c, a) => Math.floor(c - radii[a]));
+    const shape = radii.map((r) => r * 2);
+    input.prefetchVolume(origin, shape, signal);
+  } catch {
+    // Best-effort warmup only.
+  }
+}
 
 /** Install before restoring URL state. Nothing in this registry is serialized. */
 export function installInferenceRecipeContext(
@@ -230,6 +271,7 @@ export async function restoreInferenceRecipe(
       input?.signal?.removeEventListener("abort", invalidate);
     if (input.signal?.aborted) invalidate();
     signal.throwIfAborted();
+    warmInitialViewportVolume(root, input, signal);
     const file = await fetchInferenceModel(recipe.model, signal);
     signal.throwIfAborted();
     controller = new OnnxInferenceController();

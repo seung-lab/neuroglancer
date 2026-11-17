@@ -61,6 +61,12 @@ export interface PreparedInferenceInput {
     shapeZYX: readonly number[],
     signal: AbortSignal,
   ): Promise<Float32Array>;
+  /** Best-effort, non-blocking prefetch of a ZYX box clamped to source bounds. */
+  prefetchVolume?(
+    originZYX: readonly number[],
+    shapeZYX: readonly number[],
+    signal: AbortSignal,
+  ): void;
   /** Idempotent; aborts outstanding reads and releases acquired source refs. */
   dispose(): void;
 }
@@ -398,6 +404,18 @@ const UINT8_DIVISOR_255_LUT = (() => {
   for (let i = 0; i < 256; ++i) lut[i] = i / 255;
   return lut;
 })();
+
+const MAX_CONCURRENT_PREFETCH_CHUNKS = 8;
+const MAX_QUEUED_PREFETCH_CHUNKS = 128;
+
+interface PrefetchEntry {
+  readonly key: string;
+  readonly grid: Float32Array;
+  readonly callers: Set<AbortSignal>;
+  readonly abort: AbortController;
+  readonly cleanupCallers: Map<AbortSignal, () => void>;
+  inFlight: boolean;
+}
 
 export interface ChunkToZYXPatchOptions {
   readonly dataType: DataType;
@@ -771,6 +789,78 @@ export function prepareInferenceInput(
         );
     };
     source.addRef();
+    const pendingPrefetch = new Map<string, PrefetchEntry>();
+    const prefetchQueue: PrefetchEntry[] = [];
+    let activePrefetchCount = 0;
+    const cleanupEntryCallers = (entry: PrefetchEntry) => {
+      for (const clean of entry.cleanupCallers.values()) clean();
+      entry.cleanupCallers.clear();
+      entry.callers.clear();
+    };
+    const attachPrefetchCaller = (
+      entry: PrefetchEntry,
+      callerSignal: AbortSignal,
+    ) => {
+      if (callerSignal.aborted || entry.callers.has(callerSignal)) return;
+      entry.callers.add(callerSignal);
+      const onCallerAbort = () => {
+        entry.cleanupCallers.get(callerSignal)?.();
+        entry.cleanupCallers.delete(callerSignal);
+        entry.callers.delete(callerSignal);
+        if (entry.callers.size !== 0) return;
+        cleanupEntryCallers(entry);
+        if (pendingPrefetch.get(entry.key) === entry) {
+          pendingPrefetch.delete(entry.key);
+        }
+        if (!entry.inFlight) {
+          const index = prefetchQueue.indexOf(entry);
+          if (index !== -1) prefetchQueue.splice(index, 1);
+        }
+        entry.abort.abort(callerSignal.reason);
+      };
+      callerSignal.addEventListener("abort", onCallerAbort, { once: true });
+      entry.cleanupCallers.set(callerSignal, () =>
+        callerSignal.removeEventListener("abort", onCallerAbort),
+      );
+    };
+    const pumpPrefetchQueue = () => {
+      while (
+        activePrefetchCount < MAX_CONCURRENT_PREFETCH_CHUNKS &&
+        prefetchQueue.length > 0 &&
+        !lifetime.signal.aborted &&
+        isValid()
+      ) {
+        const entry = prefetchQueue.shift()!;
+        if (entry.abort.signal.aborted || entry.callers.size === 0) {
+          cleanupEntryCallers(entry);
+          pendingPrefetch.delete(entry.key);
+          continue;
+        }
+        entry.inFlight = true;
+        ++activePrefetchCount;
+        void (async () => {
+          const combinedSignal = AbortSignal.any([
+            entry.abort.signal,
+            lifetime.signal,
+          ]);
+          try {
+            await source.fetchChunk(entry.grid, () => undefined, {
+              signal: combinedSignal,
+              retryTransientErrors: true,
+            });
+          } catch {
+            // Swallow speculative prefetch errors; readPatch handles failures.
+          } finally {
+            cleanupEntryCallers(entry);
+            if (pendingPrefetch.get(entry.key) === entry) {
+              pendingPrefetch.delete(entry.key);
+            }
+            --activePrefetchCount;
+            pumpPrefetchQueue();
+          }
+        })();
+      }
+    };
     return {
       signal: lifetime.signal,
       shapeZYX: Array.from(shapeZYX),
@@ -781,6 +871,57 @@ export function prepareInferenceInput(
       validitySnapshot,
       isValid,
       assertValid,
+      prefetchVolume(originZYX, patchShapeZYX, signal) {
+        if (!isValid() || signal.aborted || lifetime.signal.aborted) return;
+        if (originZYX.length !== 3 || patchShapeZYX.length !== 3) return;
+        const gridLower = new Array<number>(3);
+        const gridUpper = new Array<number>(3);
+        for (let a = 0; a < 3; ++a) {
+          const volStart = validitySnapshot.modelOriginZYX[a];
+          const volEnd = volStart + shapeZYX[a];
+          const reqStart = Math.max(volStart, Math.floor(originZYX[a]));
+          const reqEnd = Math.min(
+            volEnd,
+            Math.ceil(originZYX[a] + patchShapeZYX[a]),
+          );
+          if (!(reqStart < reqEnd)) return;
+          const d = dims[a];
+          const lowerCoord = reqStart - translationZYX[a];
+          const upperCoord = reqEnd - translationZYX[a];
+          gridLower[d] = Math.floor(lowerCoord / spec.chunkDataSize[d]);
+          gridUpper[d] = Math.ceil(upperCoord / spec.chunkDataSize[d]);
+        }
+        outer: for (let g2 = gridLower[2]; g2 < gridUpper[2]; ++g2) {
+          for (let g1 = gridLower[1]; g1 < gridUpper[1]; ++g1) {
+            for (let g0 = gridLower[0]; g0 < gridUpper[0]; ++g0) {
+              const key = `${g0},${g1},${g2}`;
+              const existing = pendingPrefetch.get(key);
+              if (existing !== undefined) {
+                attachPrefetchCaller(existing, signal);
+                continue;
+              }
+              if (prefetchQueue.length >= MAX_QUEUED_PREFETCH_CHUNKS) {
+                break outer;
+              }
+              const entry: PrefetchEntry = {
+                key,
+                grid: new Float32Array([g0, g1, g2]),
+                callers: new Set(),
+                abort: new AbortController(),
+                cleanupCallers: new Map(),
+                inFlight: false,
+              };
+              pendingPrefetch.set(key, entry);
+              prefetchQueue.push(entry);
+              attachPrefetchCaller(entry, signal);
+              if (activePrefetchCount < MAX_CONCURRENT_PREFETCH_CHUNKS) {
+                pumpPrefetchQueue();
+              }
+            }
+          }
+        }
+        pumpPrefetchQueue();
+      },
       async readPatch(originZYX, patchShapeZYX, signal) {
         // The caller may reuse/mutate tile arrays while a chunk is in flight.
         originZYX = Array.from(originZYX);
@@ -934,6 +1075,12 @@ export function prepareInferenceInput(
       dispose() {
         if (disposed) return;
         disposed = true;
+        for (const entry of pendingPrefetch.values()) {
+          cleanupEntryCallers(entry);
+          entry.abort.abort(new Error("Inference input disposed"));
+        }
+        pendingPrefetch.clear();
+        prefetchQueue.length = 0;
         lifetime.abort(new Error("Inference input disposed"));
         for (const remove of removers) remove();
         source.dispose();

@@ -22,7 +22,10 @@ import type {
 } from "#src/inference/geometry.js";
 import {
   cropNcdhwOutput,
+  getBlendedOutputBounds,
+  getPlannedTileInputBounds,
   getRetainedOutputShape,
+  planBlendedInferenceTiles,
   planInferenceTiles,
   stitchCroppedTile,
 } from "#src/inference/geometry.js";
@@ -706,4 +709,57 @@ describe("stitchCroppedTile validation", () => {
       ),
     ).toThrow("must not alias");
   });
+});
+
+describe("planned input prefetch bounds", () => {
+  it.each([fixed, upsampled])(
+    "matches the complete tile union for scaled, shifted and edge ROIs",
+    (geometry) => {
+      for (const overlap of [true, false]) {
+        for (const origin of [
+          [0, 0, 0],
+          [-7, 101, 203],
+        ] as Zyx[]) {
+          const bounds = { origin, shape: inputBounds.shape };
+          const output = getBlendedOutputBounds(geometry, bounds, overlap);
+          const shape: Zyx = [
+            Math.min(output.shape[0], 7),
+            Math.min(output.shape[1], 51),
+            Math.min(output.shape[2], 47),
+          ];
+          for (const fraction of [0, 0.4, 1]) {
+            const start = (axis: number) =>
+              output.origin[axis] +
+              Math.floor((output.shape[axis] - shape[axis]) * fraction);
+            const roi: VoxelBox = {
+              origin: [start(0), start(1), start(2)],
+              shape,
+            };
+            const { tiles } = planBlendedInferenceTiles(
+              geometry,
+              roi,
+              { inputBounds: bounds },
+              overlap,
+            );
+            const lower = [Infinity, Infinity, Infinity];
+            const upper = [-Infinity, -Infinity, -Infinity];
+            for (const tile of tiles)
+              for (let a = 0; a < 3; ++a) {
+                lower[a] = Math.min(lower[a], tile.input.origin[a]);
+                upper[a] = Math.max(
+                  upper[a],
+                  tile.input.origin[a] + tile.input.shape[a],
+                );
+              }
+            expect(
+              getPlannedTileInputBounds(geometry, roi, bounds, overlap),
+            ).toEqual({
+              origin: lower,
+              shape: upper.map((n, a) => n - lower[a]),
+            });
+          }
+        }
+      }
+    },
+  );
 });

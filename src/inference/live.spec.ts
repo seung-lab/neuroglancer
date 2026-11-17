@@ -15,11 +15,15 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
-import { OnnxInferenceController } from "#src/inference/controller.js";
+import {
+  OnnxInferenceController,
+  type RunInferenceOptions,
+} from "#src/inference/controller.js";
 import { getRetainedOutputShape } from "#src/inference/geometry.js";
 import type { PreparedInferenceInput } from "#src/inference/input.js";
 import { LiveInference, makeLiveInferenceInfo } from "#src/inference/live.js";
 import type {
+  InferenceResult,
   InferenceWorkerRequest,
   InferenceWorkerResponse,
   ModelMetadata,
@@ -585,5 +589,145 @@ describe("live globally anchored inference", () => {
     ).toThrow("smaller");
     live.dispose();
     controller.dispose();
+  });
+
+  it("prefetches queued display tiles when the active tile dispatches its first GPU run and aborts per-job prefetch on cancel or revisit", async () => {
+    const { source, controller, workers, live } = await fixture();
+    workers[0].hold = true;
+    const prefetched: {
+      origin: readonly number[];
+      shape: readonly number[];
+      signal: AbortSignal;
+    }[] = [];
+    source.prefetchVolume = vi.fn((origin, shape, prefetchSignal) => {
+      prefetched.push({
+        origin: [...origin],
+        shape: [...shape],
+        signal: prefetchSignal,
+      });
+    });
+    const abortB1 = new AbortController();
+    const abortB2 = new AbortController();
+    const pA = live.readTile([0, 0, 0], signal());
+    const pB1 = live.readTile([0, 0, 1], abortB1.signal);
+    const pB2 = live.readTile([0, 0, 1], abortB2.signal);
+    await vi.waitFor(() => expect(workers[0].held).toBeTypeOf("function"));
+    // The active ROI warms first; queued tile B then owns a separate signal.
+    expect(prefetched).toHaveLength(2);
+    const tileBPrefetch = prefetched[1];
+    expect(tileBPrefetch.origin[2]).toBeGreaterThan(prefetched[0].origin[2]);
+    // Aborting only one consumer does NOT abort the shared job prefetch.
+    abortB1.abort(new DOMException("cancel 1", "AbortError"));
+    await expect(pB1).rejects.toThrow("cancel 1");
+    expect(tileBPrefetch!.signal.aborted).toBe(false);
+    // Aborting the last consumer of [0, 0, 1] aborts the job prefetch and allows revisit.
+    abortB2.abort(new DOMException("cancel 2", "AbortError"));
+    await expect(pB2).rejects.toThrow("cancel 2");
+    expect(tileBPrefetch!.signal.aborted).toBe(true);
+    const countBeforeRevisit = prefetched.length;
+    const pBRevisit = live.readTile([0, 0, 1], signal());
+    workers[0].hold = false;
+    workers[0].held!();
+    const [a, b] = await Promise.all([pA, pBRevisit]);
+    expect(a.length).toBeGreaterThan(0);
+    expect(b.length).toBeGreaterThan(0);
+    expect(prefetched.length).toBeGreaterThan(countBeforeRevisit);
+    live.dispose();
+    controller.dispose();
+  });
+});
+
+describe("live prefetch lifecycle", () => {
+  const flush = async () => {
+    for (let i = 0; i < 8; ++i) await Promise.resolve();
+  };
+  async function heldFixture() {
+    const f = await fixture();
+    const calls: {
+      options: RunInferenceOptions;
+      resolve: (value: InferenceResult) => void;
+      reject: (error: unknown) => void;
+    }[] = [];
+    vi.spyOn(f.controller, "run").mockImplementation(
+      (_input, options) =>
+        new Promise((resolve, reject) => {
+          calls.push({ options, resolve, reject });
+        }),
+    );
+    vi.spyOn(f.controller, "cancel").mockImplementation(() => {
+      calls.at(-1)?.reject(new Error("run canceled"));
+    });
+    const warmed: { origin: readonly number[]; signal: AbortSignal }[] = [];
+    f.source.prefetchVolume = (origin, _shape, signal) => {
+      warmed.push({ origin: [...origin], signal });
+    };
+    return { ...f, calls, warmed };
+  }
+
+  it("warms only eight queued jobs after dispatch and refills the window on cancellation", async () => {
+    const f = await heldFixture();
+    const aborts = Array.from({ length: 11 }, () => new AbortController());
+    const nx = f.live.info.shapeZYX[2] / 60;
+    const ny = f.live.info.shapeZYX[1] / 60;
+    const jobs = aborts.map((abort, i) =>
+      f.live
+        .readTile(
+          [Math.floor(i / (nx * ny)), Math.floor(i / nx) % ny, i % nx],
+          abort.signal,
+        )
+        .catch((error) => error),
+    );
+    expect(f.calls).toHaveLength(1);
+    expect(f.warmed).toHaveLength(0);
+    f.calls[0].options.onFirstRunDispatched!();
+    expect(f.warmed).toHaveLength(8);
+    aborts[1].abort(new Error("obsolete queued tile"));
+    await flush();
+    expect(f.warmed[0].signal.aborted).toBe(true);
+    expect(f.warmed).toHaveLength(9);
+    expect(f.warmed.filter((entry) => !entry.signal.aborted)).toHaveLength(8);
+    expect(f.controller.cancel).not.toHaveBeenCalled();
+    f.live.dispose();
+    await Promise.all(jobs);
+    await flush();
+    expect(f.warmed.every((entry) => entry.signal.aborted)).toBe(true);
+    expect(f.calls).toHaveLength(1);
+    f.controller.dispose();
+  });
+
+  it("job failure aborts speculative work and revisiting the failed tile uses a fresh signal", async () => {
+    const f = await heldFixture();
+    const a = f.live.readTile([0, 0, 0], signal()).catch((error) => error);
+    const b = f.live.readTile([0, 0, 1], signal()).catch((error) => error);
+    const c = f.live.readTile([0, 0, 2], signal()).catch((error) => error);
+    f.calls[0].options.onFirstRunDispatched!();
+    expect(f.warmed).toHaveLength(2);
+    const firstB = f.warmed[0];
+    f.calls[0].resolve({
+      ...f.live.info,
+      data: new Float32Array(f.live.info.channels * 16 * 60 * 60),
+      shapeZYX: [16, 60, 60],
+      provenance: null,
+    });
+    await flush();
+    expect(f.calls).toHaveLength(2);
+    f.calls[1].reject(new Error("demand network failure"));
+    await flush();
+    expect(firstB.signal.aborted).toBe(true);
+    expect((await b).message).toBe("demand network failure");
+    expect(f.calls).toHaveLength(3);
+    f.calls[2].options.onFirstRunDispatched!();
+    const revisit = f.live
+      .readTile([0, 0, 1], signal())
+      .catch((error) => error);
+    expect(f.warmed).toHaveLength(3);
+    expect(f.warmed[2].origin).toEqual(firstB.origin);
+    expect(f.warmed[2].signal).not.toBe(firstB.signal);
+    expect(f.warmed[2].signal.aborted).toBe(false);
+    f.live.dispose();
+    await Promise.all([a, c, revisit]);
+    await flush();
+    expect(f.warmed.every((entry) => entry.signal.aborted)).toBe(true);
+    f.controller.dispose();
   });
 });

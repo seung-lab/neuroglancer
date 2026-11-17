@@ -24,6 +24,7 @@ import type { OnnxInferenceController } from "#src/inference/controller.js";
 import {
   getBlendedOutputBounds,
   getInferenceStrides,
+  getPlannedTileInputBounds,
   getRetainedOutputShape,
   type InferenceGeometry,
 } from "#src/inference/geometry.js";
@@ -93,7 +94,11 @@ interface Job {
   grid: number[];
   consumers: Set<Consumer>;
   canceled: boolean;
+  prefetched: boolean;
+  abort: AbortController;
 }
+
+const PREFETCH_QUEUED_TILE_LOOKAHEAD = 8;
 
 /** One inference run at a time, deduplicated in flight; cancellation removes queued
  * jobs immediately and terminates an unneeded active run (including its read).
@@ -103,6 +108,7 @@ export class LiveInference {
   private jobs = new Map<string, Job>();
   private queue: Job[] = [];
   private active: Job | undefined;
+  private activeFirstRunDispatched = false;
   private draining = false;
   private disposed = false;
   private readonly removeInvalidation: () => void;
@@ -164,9 +170,23 @@ export class LiveInference {
         this.onError(error);
         return Promise.reject(error);
       }
-      job = { key, grid: [...gridZYX], consumers: new Set(), canceled: false };
+      job = {
+        key,
+        grid: [...gridZYX],
+        consumers: new Set(),
+        canceled: false,
+        prefetched: false,
+        abort: new AbortController(),
+      };
       this.jobs.set(key, job);
       this.queue.push(job);
+      if (
+        this.active !== undefined &&
+        this.activeFirstRunDispatched &&
+        this.queue.length <= PREFETCH_QUEUED_TILE_LOOKAHEAD
+      ) {
+        this.prefetchJobVolume(job);
+      }
     }
     const captured = job;
     return new Promise<Float32Array>((resolve, reject) => {
@@ -188,14 +208,71 @@ export class LiveInference {
         consumer.reject(signal.reason);
         if (captured.consumers.size !== 0) return;
         captured.canceled = true;
+        captured.abort.abort(signal.reason);
         if (this.jobs.get(key) === captured) this.jobs.delete(key);
         this.queue = this.queue.filter((x) => x !== captured);
-        if (this.active === captured) this.controller.cancel();
+        if (this.active === captured) {
+          this.controller.cancel();
+        } else if (this.active !== undefined && this.activeFirstRunDispatched) {
+          this.prefetchQueuedJobs();
+        }
       };
       captured.consumers.add(consumer);
       signal.addEventListener("abort", abort, { once: true });
       void this.drain();
     });
+  }
+
+  private prefetchJobVolume(job: Job) {
+    if (
+      this.disposed ||
+      job.canceled ||
+      job.prefetched ||
+      this.input.prefetchVolume === undefined
+    )
+      return;
+    job.prefetched = true;
+    try {
+      const origin = job.grid.map(
+        (x, i) =>
+          this.info.originZYX[i] + x * LIVE_INFERENCE_TILE_SHAPE_ZYX[i],
+      ) as [number, number, number];
+      const bounds = getPlannedTileInputBounds(
+        this.geometry,
+        {
+          origin,
+          shape: [...LIVE_INFERENCE_TILE_SHAPE_ZYX],
+        },
+        {
+          origin: [
+            this.input.originZYX[0],
+            this.input.originZYX[1],
+            this.input.originZYX[2],
+          ],
+          shape: [
+            this.input.shapeZYX[0],
+            this.input.shapeZYX[1],
+            this.input.shapeZYX[2],
+          ],
+        },
+        this.overlap,
+      );
+      this.input.prefetchVolume(
+        bounds.origin,
+        bounds.shape,
+        job.abort.signal,
+      );
+    } catch {
+      // Ignore prefetch calculation errors; controller.run validates rigorously.
+    }
+  }
+
+  private prefetchQueuedJobs() {
+    if (this.disposed || this.input.prefetchVolume === undefined) return;
+    const count = Math.min(this.queue.length, PREFETCH_QUEUED_TILE_LOOKAHEAD);
+    for (let i = 0; i < count; ++i) {
+      this.prefetchJobVolume(this.queue[i]);
+    }
   }
 
   private async drain() {
@@ -204,6 +281,7 @@ export class LiveInference {
     try {
       while (!this.disposed && this.queue.length !== 0) {
         const job = (this.active = this.queue.shift()!);
+        this.activeFirstRunDispatched = false;
         try {
           const result = await this.controller.run(this.input, {
             originZYX: job.grid.map(
@@ -213,6 +291,11 @@ export class LiveInference {
             shapeZYX: [...LIVE_INFERENCE_TILE_SHAPE_ZYX],
             geometry: this.geometry,
             overlap: this.overlap,
+            onFirstRunDispatched: () => {
+              if (this.active !== job) return;
+              this.activeFirstRunDispatched = true;
+              this.prefetchQueuedJobs();
+            },
           });
           this.input.assertValid();
           if (!job.canceled && !this.disposed)
@@ -221,8 +304,10 @@ export class LiveInference {
           for (const consumer of job.consumers) consumer.reject(error);
           if (!job.canceled && !this.disposed) this.onError(error);
         } finally {
+          job.abort.abort();
           if (this.jobs.get(job.key) === job) this.jobs.delete(job.key);
           this.active = undefined;
+          this.activeFirstRunDispatched = false;
         }
       }
     } finally {
@@ -236,6 +321,7 @@ export class LiveInference {
     this.removeInvalidation();
     for (const job of this.jobs.values()) {
       job.canceled = true;
+      job.abort.abort(new DOMException("Live inference stopped", "AbortError"));
       for (const consumer of job.consumers)
         consumer.reject(
           new DOMException("Live inference stopped", "AbortError"),

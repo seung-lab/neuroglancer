@@ -1698,4 +1698,275 @@ describe("copyChunkToZYXPatch", () => {
       "Inference chunk accessor did not return a scalar number",
     );
   });
+
+  it("prefetchVolume deduplicates in-flight/queued grid coordinates, bounds concurrency, and retries after completion", async () => {
+    const f = fixture({ upper: [20, 20, 20], chunkSize: [2, 2, 2] });
+    const prepared = prepareInferenceInput(f.layer as never);
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const seenGrids: string[] = [];
+    const resolvers: (() => void)[] = [];
+    f.source.fetchChunk = vi.fn(
+      (grid, _transform, progressOptions: Partial<ProgressOptions>) =>
+        new Promise<void>((resolve, reject) => {
+          ++inFlight;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          seenGrids.push(Array.from(grid).join(","));
+          progressOptions.signal?.addEventListener(
+            "abort",
+            () => {
+              --inFlight;
+              reject(progressOptions.signal?.reason);
+            },
+            { once: true },
+          );
+          resolvers.push(() => {
+            --inFlight;
+            resolve();
+          });
+        }) as never,
+    );
+    const firstAbort = new AbortController();
+    const secondAbort = new AbortController();
+    // Overlapping calls while in flight are deduplicated and globally capped at 8 active.
+    prepared.prefetchVolume?.([0, 0, 0], [4, 4, 4], firstAbort.signal);
+    prepared.prefetchVolume?.([0, 0, 0], [4, 4, 4], secondAbort.signal);
+    expect(maxInFlight).toBeLessThanOrEqual(8);
+    const countWhileInFlight = seenGrids.length;
+    expect(countWhileInFlight).toBe(8);
+    // Aborting only one caller keeps shared chunks alive until all callers abort or finish.
+    firstAbort.abort();
+    expect(inFlight).toBe(8);
+    while (resolvers.length > 0) resolvers.shift()!();
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+    expect(inFlight).toBe(0);
+    // After completion, revisiting can re-request (relying on source cache rather than permanent set).
+    prepared.prefetchVolume?.([0, 0, 0], [2, 2, 2], secondAbort.signal);
+    expect(seenGrids.length).toBeGreaterThan(countWhileInFlight);
+    while (resolvers.length > 0) resolvers.shift()!();
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+    prepared.dispose();
+  });
+});
+
+describe("bounded speculative source queue", () => {
+  it("caps all calls at eight active plus 128 queued and aborts outstanding fetches on disposal", async () => {
+    const f = fixture({ upper: [20, 20, 20], chunkSize: [2, 2, 2] });
+    const prepared = prepareInferenceInput(f.layer as never);
+    const pending = new Set<() => void>();
+    let started = 0,
+      active = 0,
+      peak = 0,
+      aborted = 0;
+    f.source.fetchChunk = vi.fn(
+      (_grid, _transform, options: Partial<ProgressOptions>) =>
+        new Promise<void>((resolve, reject) => {
+          ++started;
+          ++active;
+          peak = Math.max(peak, active);
+          let done = false;
+          const finish = (error?: unknown) => {
+            if (done) return;
+            done = true;
+            --active;
+            pending.delete(succeed);
+            options.signal?.removeEventListener("abort", onAbort);
+            if (error === undefined) resolve();
+            else reject(error);
+          };
+          const succeed = () => finish();
+          const onAbort = () => {
+            ++aborted;
+            finish(options.signal?.reason);
+          };
+          pending.add(succeed);
+          options.signal?.addEventListener("abort", onAbort, { once: true });
+        }) as never,
+    );
+    try {
+      const caller = new AbortController();
+      // Each box intersects 1000 chunks, but repeated calls cannot grow the queue.
+      for (let i = 0; i < 5; ++i)
+        prepared.prefetchVolume?.([0, 0, 0], [20, 20, 20], caller.signal);
+      expect(started).toBe(8);
+      for (let i = 0; i < 30 && pending.size; ++i) {
+        for (const finish of Array.from(pending)) finish();
+        await Promise.resolve();
+        await Promise.resolve();
+      }
+      expect(active).toBe(0);
+      expect(started).toBe(136);
+      expect(peak).toBe(8);
+      prepared.prefetchVolume?.([0, 0, 0], [20, 20, 20], caller.signal);
+      expect(active).toBe(8);
+      prepared.dispose();
+      await Promise.resolve();
+      expect(active).toBe(0);
+      expect(aborted).toBe(8);
+    } finally {
+      prepared.dispose();
+    }
+  });
+});
+
+describe("shared prefetch caller cleanup", () => {
+  it("releases each aborted caller immediately while a long-lived caller keeps the fetch", () => {
+    const f = fixture({ upper: [20, 20, 20], chunkSize: [2, 2, 2] });
+    const prepared = prepareInferenceInput(f.layer as never);
+    f.source.fetchChunk = vi.fn(
+      (_grid, _transform, options: Partial<ProgressOptions>) =>
+        new Promise<void>((_resolve, reject) => {
+          options.signal?.addEventListener(
+            "abort",
+            () => reject(options.signal?.reason),
+            { once: true },
+          );
+        }) as never,
+    );
+    try {
+      const keep = new AbortController();
+      prepared.prefetchVolume?.([0, 0, 0], [2, 2, 2], keep.signal);
+      for (let i = 0; i < 100; ++i) {
+        const churn = new AbortController();
+        const remove = vi.spyOn(churn.signal, "removeEventListener");
+        prepared.prefetchVolume?.([0, 0, 0], [2, 2, 2], churn.signal);
+        churn.abort();
+        expect(remove).toHaveBeenCalledWith("abort", expect.any(Function));
+      }
+      expect(f.source.fetchChunk).toHaveBeenCalledTimes(1);
+    } finally {
+      prepared.dispose();
+    }
+  });
+});
+
+describe("speculative prefetch lifecycle", () => {
+  const flush = async () => {
+    for (let i = 0; i < 8; ++i) await Promise.resolve();
+  };
+  function gated() {
+    const f = fixture({ upper: [1000, 1000, 1000], chunkSize: [1, 1, 1] });
+    const original = f.source.fetchChunk.getMockImplementation()!;
+    let active = 0;
+    let peak = 0;
+    const calls: {
+      key: string;
+      settled: boolean;
+      signal: AbortSignal;
+      finish: (error?: unknown) => void;
+    }[] = [];
+    f.source.fetchChunk.mockImplementation(
+      (grid, _copy, options) =>
+        new Promise((resolve, reject) => {
+          ++active;
+          peak = Math.max(peak, active);
+          const request = {
+            key: grid.join(),
+            settled: false,
+            signal: options.signal!,
+            finish(error?: unknown) {
+              if (request.settled) return;
+              request.settled = true;
+              --active;
+              options.signal!.removeEventListener("abort", abort);
+              if (error === undefined) resolve(undefined);
+              else reject(error);
+            },
+          };
+          const abort = () => request.finish(options.signal!.reason);
+          options.signal!.addEventListener("abort", abort, { once: true });
+          calls.push(request);
+          if (options.signal!.aborted) abort();
+        }) as never,
+    );
+    const input = f.prepare();
+    return {
+      f,
+      original,
+      input,
+      calls,
+      active: () => active,
+      peak: () => peak,
+      async drain() {
+        for (let round = 0; round < 200; ++round) {
+          await flush();
+          const current = calls.filter((call) => !call.settled);
+          if (!current.length) return;
+          for (const call of current) call.finish();
+        }
+        throw new Error("prefetch failed to drain within bounded work");
+      },
+    };
+  }
+
+  it("enforces eight active and 128 queued total across disjoint huge calls", async () => {
+    const g = gated();
+    const a = new AbortController();
+    const b = new AbortController();
+    g.input.prefetchVolume!([0, 0, 0], [1000, 1000, 1000], a.signal);
+    expect(g.calls).toHaveLength(8);
+    for (let i = 0; i < 16; ++i) {
+      g.input.prefetchVolume!([500 + i, 500, 500], [20, 20, 20], b.signal);
+    }
+    expect(g.calls).toHaveLength(8);
+    await g.drain();
+    expect(g.calls).toHaveLength(136);
+    expect(new Set(g.calls.map((call) => call.key)).size).toBe(136);
+    expect(g.peak()).toBe(8);
+    expect(g.active()).toBe(0);
+    g.input.dispose();
+  });
+
+  it("last-caller cancellation drops queued work and a same-turn revisit survives old finally cleanup", async () => {
+    const g = gated();
+    const a = new AbortController();
+    const b = new AbortController();
+    const c = new AbortController();
+    g.input.prefetchVolume!([0, 0, 0], [1, 1, 20], a.signal);
+    g.input.prefetchVolume!([0, 0, 0], [1, 1, 20], b.signal);
+    a.abort();
+    expect(g.active()).toBe(8);
+    b.abort();
+    expect(g.active()).toBe(0);
+    g.input.prefetchVolume!([0, 0, 0], [1, 1, 20], c.signal);
+    await flush();
+    expect(g.active()).toBe(8);
+    await g.drain();
+    expect(g.calls).toHaveLength(28);
+    expect(g.peak()).toBe(8);
+    expect(g.calls.filter((call) => call.key === "0,0,0")).toHaveLength(2);
+    expect(g.calls.filter((call) => call.key === "19,0,0")).toHaveLength(1);
+    g.input.dispose();
+  });
+
+  it("fetch failures do not strand the queue or poison later speculative and real reads", async () => {
+    const g = gated();
+    const a = new AbortController();
+    g.input.prefetchVolume!([0, 0, 0], [1, 1, 16], a.signal);
+    g.calls[0].finish(new Error("speculative network failure"));
+    await g.drain();
+    expect(g.calls).toHaveLength(16);
+    g.input.prefetchVolume!([0, 0, 0], [1, 1, 1], a.signal);
+    expect(g.calls).toHaveLength(17);
+    await g.drain();
+    g.f.source.fetchChunk.mockImplementation(g.original);
+    expect(await g.input.readPatch([0, 0, 0], [1, 1, 3], a.signal)).toEqual(
+      new Float32Array([0, 1, 2]),
+    );
+    g.input.dispose();
+  });
+
+  it("dispose aborts all eight active requests and drops 128 queued requests", async () => {
+    const g = gated();
+    g.input.prefetchVolume!([0, 0, 0], [1000, 1000, 1000], signal());
+    expect(g.active()).toBe(8);
+    g.input.dispose();
+    await flush();
+    expect(g.active()).toBe(0);
+    expect(g.calls).toHaveLength(8);
+    expect(g.calls.every((call) => call.signal.aborted)).toBe(true);
+    g.input.prefetchVolume!([0, 0, 0], [1, 1, 20], signal());
+    await flush();
+    expect(g.calls).toHaveLength(8);
+  });
 });

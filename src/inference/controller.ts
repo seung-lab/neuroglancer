@@ -17,6 +17,7 @@
 import {
   blendCroppedTile,
   getInferenceStrides,
+  getPlannedTileInputBounds,
   getRetainedOutputShape,
   makeWuPatchMask,
   planBlendedInferenceTiles,
@@ -48,7 +49,21 @@ export interface RunInferenceOptions {
   geometry?: InferenceGeometry;
   /** Half-input-stride Wu blending by default; false directly stitches retained outputs. */
   overlap?: boolean;
+  /** Invoked once when the first worker run request of this call has been dispatched. */
+  onFirstRunDispatched?: () => void;
 }
+
+declare const NEUROGLANCER_INFERENCE_PATCH_CACHE_MIB: number | undefined;
+
+const DEFAULT_PATCH_CACHE_MIB =
+  typeof NEUROGLANCER_INFERENCE_PATCH_CACHE_MIB === "number" &&
+  Number.isFinite(NEUROGLANCER_INFERENCE_PATCH_CACHE_MIB)
+    ? Math.max(0, Math.min(512, NEUROGLANCER_INFERENCE_PATCH_CACHE_MIB))
+    : 128;
+
+export const DEFAULT_PATCH_CACHE_BYTES = Math.round(
+  DEFAULT_PATCH_CACHE_MIB * 1024 * 1024,
+);
 
 function triple(values: readonly number[]): Zyx {
   if (values.length !== 3) throw new Error("Expected a ZYX triple");
@@ -93,7 +108,7 @@ export class OnnxInferenceController {
         new URL("../inference_worker.bundle.js", import.meta.url),
         { type: "module" },
       ),
-    private readonly patchCacheBudget = 128 * 1024 * 1024,
+    private readonly patchCacheBudget = DEFAULT_PATCH_CACHE_BYTES,
   ) {
     if (!Number.isSafeInteger(patchCacheBudget) || patchCacheBudget < 0)
       throw new Error("Patch cache budget must be a nonnegative safe integer");
@@ -412,8 +427,11 @@ export class OnnxInferenceController {
         }
         if (batch.length > 0) yield batch;
       })();
-      const tileKey = (tile: InferenceTile) =>
-        JSON.stringify([tile.input.origin, tile.input.shape]);
+      const tileKey = (tile: InferenceTile) => {
+        const [o0, o1, o2] = tile.input.origin;
+        const [s0, s1, s2] = tile.input.shape;
+        return `[[${o0},${o1},${o2}],[${s0},${s1},${s2}]]`;
+      };
       const isCached = (batch: InferenceTile[]) =>
         batch.every((tile) => this.patchCache.has(tileKey(tile)));
       const getCached = (batch: InferenceTile[]) => {
@@ -500,6 +518,29 @@ export class OnnxInferenceController {
           return { error };
         }
       };
+      let remainingVolumePrefetched = false;
+      let firstRunNotified = false;
+      const prefetchRemainingUncachedVolume = () => {
+        if (remainingVolumePrefetched) return;
+        remainingVolumePrefetched = true;
+        if (input.prefetchVolume === undefined) return;
+        const bounds = getPlannedTileInputBounds(
+          geometry,
+          roi,
+          {
+            origin: triple(input.originZYX),
+            shape: triple(input.shapeZYX),
+          },
+          overlap,
+        );
+        input.prefetchVolume(bounds.origin, bounds.shape, abort.signal);
+      };
+      const notifyFirstRunDispatched = () => {
+        prefetchRemainingUncachedVolume();
+        if (firstRunNotified) return;
+        firstRunNotified = true;
+        options.onFirstRunDispatched?.();
+      };
       type PrefetchedPatch = {
         pending: ReturnType<typeof readPatch>;
         ready?: Awaited<ReturnType<typeof readPatch>>;
@@ -508,6 +549,38 @@ export class OnnxInferenceController {
       let responsePending: ReturnType<typeof runPatch> | undefined;
       let next = batches.next();
       let completed = 0;
+      type DeferredBlend = {
+        tile: InferenceTile;
+        output: Float32Array;
+        key: string;
+        alreadyCached?: boolean;
+      };
+      const deferredCachedBlends: DeferredBlend[] = [];
+      const flushDeferredCachedBlends = () => {
+        while (deferredCachedBlends.length !== 0) {
+          check();
+          const { tile, output, key, alreadyCached } =
+            deferredCachedBlends.shift()!;
+          if (overlap) {
+            blendCroppedTile(
+              output,
+              data,
+              weights!,
+              geometry,
+              roi,
+              tile.output,
+              patchMask!,
+            );
+          } else {
+            stitchCroppedTile(output, data, geometry, roi, tile.output);
+          }
+          if (!alreadyCached) {
+            this.patchCache.delete(key);
+            this.patchCache.set(key, output);
+          }
+          onProgress(++completed, total);
+        }
+      };
       onProgress(0, total);
       while (!next.done) {
         check();
@@ -520,11 +593,22 @@ export class OnnxInferenceController {
         let outputs =
           responsePending === undefined ? getCached(batch) : undefined;
         const cached = outputs !== undefined;
+        if (cached && !next.done) {
+          for (const [n, tile] of batch.entries()) {
+            deferredCachedBlends.push({
+              tile,
+              output: outputs![n],
+              key: tileKey(tile),
+            });
+          }
+          continue;
+        }
         if (outputs === undefined) {
           if (responsePending === undefined) {
             const prepared = await (pendingPatch?.pending ?? readPatch(batch));
             if ("error" in prepared) throw prepared.error;
             responsePending = runPatch(prepared.patch);
+            if (this.pending.size > 0) notifyFirstRunDispatched();
           }
           if (!next.done && this.pending.size > 0 && !isCached(next.value)) {
             const ahead: PrefetchedPatch = {
@@ -534,6 +618,9 @@ export class OnnxInferenceController {
               ahead.ready = ready;
             });
             prefetched = ahead;
+          }
+          if (this.pending.size > 0 && deferredCachedBlends.length !== 0) {
+            flushDeferredCachedBlends();
           }
           const outcome = await responsePending;
           responsePending = undefined;
@@ -573,6 +660,39 @@ export class OnnxInferenceController {
             prefetched = undefined;
           }
         }
+        flushDeferredCachedBlends();
+        if (
+          !cached &&
+          responsePending === undefined &&
+          !next.done &&
+          isCached(next.value)
+        ) {
+          for (const [n, tile] of batch.entries()) {
+            check();
+            const output = outputs[n];
+            if (output.length !== outputElements)
+              throw new Error(
+                "Cropped NCDHW or destination length does not match geometry",
+              );
+            for (let i = 0; i < output.length; ++i) {
+              if (!Number.isFinite(output[i]))
+                throw new Error(
+                  overlap
+                    ? "Blending predictions must be finite"
+                    : "Stitching predictions must be finite",
+                );
+            }
+            const key = tileKey(tile);
+            this.cachePatch(key, output);
+            deferredCachedBlends.push({
+              tile,
+              output,
+              key,
+              alreadyCached: true,
+            });
+          }
+          continue;
+        }
         for (const [n, tile] of batch.entries()) {
           check();
           const output = outputs[n];
@@ -601,6 +721,7 @@ export class OnnxInferenceController {
           onProgress(++completed, total);
         }
       }
+      flushDeferredCachedBlends();
       check();
       if (weights !== undefined) {
         for (const weight of weights) {

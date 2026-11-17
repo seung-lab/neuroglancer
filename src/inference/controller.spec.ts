@@ -2466,4 +2466,43 @@ describe("OnnxInferenceController", () => {
     ]);
     controller.dispose();
   });
+
+  it("invokes onFirstRunDispatched once, prefetches ROI input bounds, and overlaps deferred cached blends", async () => {
+    const { controller, file } = setup();
+    await controller.loadModel(file);
+    const { source } = input();
+    const prefetched: { origin: readonly number[]; shape: readonly number[] }[] =
+      [];
+    (source as PreparedInferenceInput).prefetchVolume = vi.fn(
+      (origin, shape) => {
+        prefetched.push({ origin: [...origin], shape: [...shape] });
+      },
+    );
+    let firstRunCalls = 0;
+    const first = await controller.run(source, {
+      ...options,
+      shapeZYX: [16, 40, 40],
+      onFirstRunDispatched: () => {
+        ++firstRunCalls;
+      },
+    });
+    expect(firstRunCalls).toBe(1);
+    expect(prefetched).toHaveLength(1);
+    // Second adjacent ROI shares overlapping cached patches with the first ROI.
+    let secondFirstRunCalls = 0;
+    const second = await controller.run(source, {
+      ...options,
+      originZYX: [10, 40, 60],
+      shapeZYX: [16, 40, 40],
+      onFirstRunDispatched: () => {
+        ++secondFirstRunCalls;
+      },
+    });
+    expect(secondFirstRunCalls).toBe(1);
+    expect(second.data.length).toBe(first.data.length);
+    for (let i = 0; i < second.data.length; ++i) {
+      expect(Number.isFinite(second.data[i])).toBe(true);
+    }
+    controller.dispose();
+  });
 });
