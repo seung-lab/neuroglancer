@@ -48,7 +48,7 @@ ort.env.wasm.numThreads = globalThis.crossOriginIsolated
   ? Math.max(1, Math.min(maxCpuThreads, navigator.hardwareConcurrency || 1))
   : 1;
 ort.env.wasm.proxy = false;
-const session = new ProviderSession(
+let session = new ProviderSession(
   (model, options) => ort.InferenceSession.create(model, options),
   ort.env.wasm.numThreads!,
 );
@@ -159,7 +159,24 @@ async function handle(request: InferenceWorkerRequest) {
 }
 
 // Requests are serialized even when callers accidentally post concurrently.
+// Auxiliary thread configuration locks before the first queued request.
+let sessionLocked = false;
 let pending = Promise.resolve();
-self.onmessage = (event: MessageEvent<InferenceWorkerRequest>) => {
-  pending = pending.then(() => handle(event.data));
+self.onmessage = (
+  event: MessageEvent<InferenceWorkerRequest | { wasmThreads?: number }>,
+) => {
+  const data = event.data;
+  if (!("kind" in data)) {
+    if (!sessionLocked && data.wasmThreads === 1) {
+      sessionLocked = true;
+      ort.env.wasm.numThreads = 1;
+      session = new ProviderSession(
+        (model, options) => ort.InferenceSession.create(model, options),
+        ort.env.wasm.numThreads!,
+      );
+    }
+    return;
+  }
+  sessionLocked = true;
+  pending = pending.then(() => handle(data));
 };

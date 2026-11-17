@@ -36,12 +36,19 @@ class TileWorker {
   onmessage: ((event: { data: InferenceWorkerResponse }) => void) | null = null;
   onerror = null;
   hold = false;
+  runDelayMs = 0;
+  runs = 0;
   contextBias = false;
   held: (() => void) | undefined;
   terminated = false;
   metadata!: ModelMetadata;
-  postMessage(message: InferenceWorkerRequest, transfer: Transferable[]) {
-    const request = structuredClone(message, { transfer });
+  postMessage(
+    message: InferenceWorkerRequest | Record<string, unknown>,
+    transfer: Transferable[] = [],
+  ) {
+    const cloned = structuredClone(message, { transfer });
+    if (!("kind" in cloned)) return;
+    const request = cloned as InferenceWorkerRequest;
     const respond = () => {
       if (request.kind === "load") {
         this.metadata = {
@@ -58,7 +65,14 @@ class TileWorker {
           initMs: 0,
           threads: 1,
           requestedProvider: request.provider,
-          actualProvider: "wasm",
+          actualProvider: request.provider === "webgpu" ? "webgpu" : "wasm",
+          ...(request.precision === undefined
+            ? {}
+            : {
+                requestedPrecision: request.precision,
+                actualPrecision:
+                  request.provider === "webgpu" ? request.precision : "float32",
+              }),
         };
         this.onmessage?.({
           data: {
@@ -68,6 +82,7 @@ class TileWorker {
           },
         });
       } else {
+        ++this.runs;
         let output = new Float32Array(4 * 16 * 60 * 60);
         const bias = this.contextBias ? request.input[0] : 0;
         let i = 0;
@@ -100,6 +115,8 @@ class TileWorker {
       }
     };
     if (request.kind === "run" && this.hold) this.held = respond;
+    else if (request.kind === "run" && this.runDelayMs > 0)
+      setTimeout(respond, this.runDelayMs);
     else queueMicrotask(respond);
   }
   terminate() {
@@ -634,6 +651,68 @@ describe("live globally anchored inference", () => {
     expect(prefetched.length).toBeGreaterThan(countBeforeRevisit);
     live.dispose();
     controller.dispose();
+  });
+
+  it("wakes concurrent queued WebGPU tiles after primary validation, deduplicates shared contexts, and cooperatively cancels panned tiles without killing workers", async () => {
+    const single = await fixture();
+    single.workers[0].contextBias = true;
+    const expectedLeft = await single.live.readTile([1, 2, 1], signal());
+    const expectedRight = await single.live.readTile([1, 2, 2], signal());
+    single.live.dispose();
+    single.controller.dispose();
+
+    const {
+      source,
+      live: oldLive,
+      controller: oldCtrl,
+      onError,
+    } = await fixture();
+    oldLive.dispose();
+    oldCtrl.dispose();
+
+    const poolWorkers: TileWorker[] = [];
+    const pooledController = new OnnxInferenceController(
+      () => {
+        const w = new TileWorker();
+        w.contextBias = true;
+        w.runDelayMs = 4;
+        poolWorkers.push(w);
+        return w as unknown as Worker;
+      },
+      undefined,
+      3,
+    );
+    await pooledController.loadModel(
+      {
+        name: "local.onnx",
+        size: 1,
+        arrayBuffer: async () => new ArrayBuffer(1),
+      } as File,
+      "webgpu",
+      undefined,
+      "float16",
+    );
+    const pooledLive = new LiveInference(pooledController, source, onError);
+
+    const panAbort = new AbortController();
+    const pannedTile = pooledLive.readTile([0, 0, 0], panAbort.signal);
+    const leftPromise = pooledLive.readTile([1, 2, 1], signal());
+    const rightPromise = pooledLive.readTile([1, 2, 2], signal());
+
+    await new Promise<void>((resolve) => setTimeout(resolve, 6));
+    panAbort.abort(new DOMException("panned away", "AbortError"));
+    await expect(pannedTile).rejects.toThrow("panned away");
+
+    const [gotLeft, gotRight] = await Promise.all([leftPromise, rightPromise]);
+    expect(gotLeft).toEqual(expectedLeft);
+    expect(gotRight).toEqual(expectedRight);
+    expect(poolWorkers.length).toBeGreaterThan(1);
+    expect(poolWorkers.length).toBeLessThanOrEqual(3);
+    expect(poolWorkers.every((w) => !w.terminated)).toBe(true);
+    expect(onError).not.toHaveBeenCalled();
+
+    pooledLive.dispose();
+    pooledController.dispose();
   });
 });
 

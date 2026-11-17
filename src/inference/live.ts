@@ -100,16 +100,13 @@ interface Job {
 
 const PREFETCH_QUEUED_TILE_LOOKAHEAD = 8;
 
-/** One inference run at a time, deduplicated in flight; cancellation removes queued
- * jobs immediately and terminates an unneeded active run (including its read).
- * Queue metadata is bounded independently of volume extent. */
+/** Coordinates bounded, deduplicated live-tile inference and cancellation. */
 export class LiveInference {
   readonly info;
   private jobs = new Map<string, Job>();
   private queue: Job[] = [];
-  private active: Job | undefined;
+  private activeJobs = new Set<Job>();
   private activeFirstRunDispatched = false;
-  private draining = false;
   private disposed = false;
   private readonly removeInvalidation: () => void;
 
@@ -117,7 +114,10 @@ export class LiveInference {
     private readonly controller: Pick<
       OnnxInferenceController,
       "run" | "cancel"
-    >,
+    > & {
+      readonly maxConcurrentRuns?: number;
+      readonly supportsRunSignal?: boolean;
+    },
     private readonly input: PreparedInferenceInput,
     private readonly onError: (error: unknown) => void = () => {},
     private readonly geometry: InferenceGeometry = makeNooversegGeometry([
@@ -181,7 +181,7 @@ export class LiveInference {
       this.jobs.set(key, job);
       this.queue.push(job);
       if (
-        this.active !== undefined &&
+        this.activeJobs.size > 0 &&
         this.activeFirstRunDispatched &&
         this.queue.length <= PREFETCH_QUEUED_TILE_LOOKAHEAD
       ) {
@@ -211,15 +211,17 @@ export class LiveInference {
         captured.abort.abort(signal.reason);
         if (this.jobs.get(key) === captured) this.jobs.delete(key);
         this.queue = this.queue.filter((x) => x !== captured);
-        if (this.active === captured) {
-          this.controller.cancel();
-        } else if (this.active !== undefined && this.activeFirstRunDispatched) {
+        if (this.activeJobs.has(captured)) {
+          if (!this.controller.supportsRunSignal) {
+            this.controller.cancel();
+          }
+        } else if (this.activeJobs.size > 0 && this.activeFirstRunDispatched) {
           this.prefetchQueuedJobs();
         }
       };
       captured.consumers.add(consumer);
       signal.addEventListener("abort", abort, { once: true });
-      void this.drain();
+      this.drain();
     });
   }
 
@@ -234,8 +236,7 @@ export class LiveInference {
     job.prefetched = true;
     try {
       const origin = job.grid.map(
-        (x, i) =>
-          this.info.originZYX[i] + x * LIVE_INFERENCE_TILE_SHAPE_ZYX[i],
+        (x, i) => this.info.originZYX[i] + x * LIVE_INFERENCE_TILE_SHAPE_ZYX[i],
       ) as [number, number, number];
       const bounds = getPlannedTileInputBounds(
         this.geometry,
@@ -257,11 +258,7 @@ export class LiveInference {
         },
         this.overlap,
       );
-      this.input.prefetchVolume(
-        bounds.origin,
-        bounds.shape,
-        job.abort.signal,
-      );
+      this.input.prefetchVolume(bounds.origin, bounds.shape, job.abort.signal);
     } catch {
       // Ignore prefetch calculation errors; controller.run validates rigorously.
     }
@@ -275,43 +272,59 @@ export class LiveInference {
     }
   }
 
-  private async drain() {
-    if (this.draining) return;
-    this.draining = true;
+  private drain() {
+    if (this.disposed) return;
+    const limit = Math.max(1, this.controller.maxConcurrentRuns ?? 1);
+    while (
+      !this.disposed &&
+      this.queue.length !== 0 &&
+      this.activeJobs.size < limit
+    ) {
+      const job = this.queue.shift()!;
+      if (job.canceled) continue;
+      if (this.activeJobs.size === 0) this.activeFirstRunDispatched = false;
+      this.activeJobs.add(job);
+      void this.runJob(job);
+    }
+  }
+
+  private async runJob(job: Job) {
     try {
-      while (!this.disposed && this.queue.length !== 0) {
-        const job = (this.active = this.queue.shift()!);
-        this.activeFirstRunDispatched = false;
-        try {
-          const result = await this.controller.run(this.input, {
-            originZYX: job.grid.map(
-              (x, i) =>
-                this.info.originZYX[i] + x * LIVE_INFERENCE_TILE_SHAPE_ZYX[i],
-            ),
-            shapeZYX: [...LIVE_INFERENCE_TILE_SHAPE_ZYX],
-            geometry: this.geometry,
-            overlap: this.overlap,
-            onFirstRunDispatched: () => {
-              if (this.active !== job) return;
-              this.activeFirstRunDispatched = true;
-              this.prefetchQueuedJobs();
-            },
-          });
-          this.input.assertValid();
-          if (!job.canceled && !this.disposed)
-            for (const consumer of job.consumers) consumer.resolve(result.data);
-        } catch (error) {
-          for (const consumer of job.consumers) consumer.reject(error);
-          if (!job.canceled && !this.disposed) this.onError(error);
-        } finally {
-          job.abort.abort();
-          if (this.jobs.get(job.key) === job) this.jobs.delete(job.key);
-          this.active = undefined;
-          this.activeFirstRunDispatched = false;
-        }
-      }
+      const result = await this.controller.run(
+        this.input,
+        {
+          originZYX: job.grid.map(
+            (x, i) =>
+              this.info.originZYX[i] + x * LIVE_INFERENCE_TILE_SHAPE_ZYX[i],
+          ),
+          shapeZYX: [...LIVE_INFERENCE_TILE_SHAPE_ZYX],
+          geometry: this.geometry,
+          overlap: this.overlap,
+          ...(this.controller.supportsRunSignal
+            ? { signal: job.abort.signal }
+            : {}),
+          onFirstRunDispatched: () => {
+            if (!this.activeJobs.has(job)) return;
+            this.activeFirstRunDispatched = true;
+            this.prefetchQueuedJobs();
+          },
+        },
+        (completed) => {
+          if (completed > 0) this.drain();
+        },
+      );
+      this.input.assertValid();
+      if (!job.canceled && !this.disposed)
+        for (const consumer of job.consumers) consumer.resolve(result.data);
+    } catch (error) {
+      for (const consumer of job.consumers) consumer.reject(error);
+      if (!job.canceled && !this.disposed) this.onError(error);
     } finally {
-      this.draining = false;
+      job.abort.abort();
+      if (this.jobs.get(job.key) === job) this.jobs.delete(job.key);
+      this.activeJobs.delete(job);
+      if (this.activeJobs.size === 0) this.activeFirstRunDispatched = false;
+      this.drain();
     }
   }
 
@@ -329,6 +342,7 @@ export class LiveInference {
     }
     this.jobs.clear();
     this.queue = [];
-    if (this.active !== undefined) this.controller.cancel();
+    if (this.activeJobs.size > 0) this.controller.cancel();
+    this.activeJobs.clear();
   }
 }

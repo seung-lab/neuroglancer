@@ -568,4 +568,79 @@ describe("worker dynamic tensor contract", () => {
       expect(raw.dispose).toHaveBeenCalledTimes(1);
     },
   );
+
+  it("permits { wasmThreads: 1 } only before the first queued request and locks out in-flight session replacement", async () => {
+    vi.resetModules();
+    vi.stubGlobal("NEUROGLANCER_INFERENCE_MAX_CPU_THREADS", 8);
+    vi.stubGlobal("crossOriginIsolated", true);
+    vi.stubGlobal("navigator", {
+      hardwareConcurrency: 16,
+      gpu: { requestAdapter: async () => ({}) },
+    });
+    await import("#src/inference/worker.js");
+    handler = self.onmessage!;
+    expect(mocks.env.wasm).toMatchObject({ numThreads: 8 });
+
+    // Non-1 values are ignored and do not lock configuration.
+    handler({ data: { wasmThreads: 4 } } as MessageEvent);
+    expect(mocks.env.wasm).toMatchObject({ numThreads: 8 });
+
+    // Valid auxiliary single-thread override before any request succeeds.
+    handler({ data: { wasmThreads: 1 } } as MessageEvent);
+    expect(mocks.env.wasm).toMatchObject({ numThreads: 1 });
+    expect(await load()).toMatchObject({ threads: 1 });
+
+    // Fresh worker: once a load is queued (even while still in flight with
+    // session.metadata === undefined), late { wasmThreads: 1 } cannot replace session.
+    vi.resetModules();
+    mocks.create.mockReset();
+    vi.stubGlobal("NEUROGLANCER_INFERENCE_MAX_CPU_THREADS", 8);
+    vi.stubGlobal("isSecureContext", true);
+    vi.stubGlobal("crossOriginIsolated", true);
+    vi.stubGlobal("navigator", {
+      hardwareConcurrency: 16,
+      gpu: { requestAdapter: async () => ({}) },
+    });
+    let resolveCreate: ((value: unknown) => void) | undefined;
+    mocks.create.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveCreate = resolve;
+        }),
+    );
+    await import("#src/inference/worker.js");
+    handler = self.onmessage!;
+    expect(mocks.env.wasm).toMatchObject({ numThreads: 8 });
+
+    const inflightLoad = send({
+      id: 99,
+      kind: "load",
+      model: new ArrayBuffer(8),
+      provider: "webgpu",
+    });
+    // Late config right after queueing load is ignored.
+    handler({ data: { wasmThreads: 1 } } as MessageEvent);
+    expect(mocks.env.wasm).toMatchObject({ numThreads: 8 });
+    await vi.waitFor(() => expect(resolveCreate).toBeTypeOf("function"));
+    // Late config while load is suspended inside create() is also ignored.
+    handler({ data: { wasmThreads: 1 } } as MessageEvent);
+    expect(mocks.env.wasm).toMatchObject({ numThreads: 8 });
+    resolveCreate!({
+      inputNames: ["input"],
+      outputNames: ["output"],
+      inputMetadata: [
+        { isTensor: true, shape: [1, 1, 20, 80, 80], type: "float32" },
+      ],
+      outputMetadata: [
+        { isTensor: true, shape: [1, 4, 20, 80, 80], type: "float32" },
+      ],
+      run: mocks.run,
+      release: vi.fn(),
+    });
+    const loaded = await inflightLoad;
+    expect(loaded).toMatchObject({
+      kind: "loaded",
+      metadata: expect.objectContaining({ threads: 8 }),
+    });
+  });
 });

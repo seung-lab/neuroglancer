@@ -42,17 +42,41 @@ class FakeWorker {
   runRequests: Extract<InferenceWorkerRequest, { kind: "run" }>[] = [];
   patchOriginBias = false;
   outputFailure: "error" | "short" | "nan" | "infinity" | undefined;
+  loadFailure = false;
+  loadMetadataOverride: Partial<ModelMetadata> | undefined;
+  onBeforeRun: ((worker: FakeWorker) => void) | undefined;
+  configs: Record<string, unknown>[] = [];
+  holdLoad = false;
+  heldLoad: (() => void) | undefined;
   hold = false;
   runDelayMs = 0;
   held: (() => void) | undefined;
-  postMessage(message: InferenceWorkerRequest, transfer: Transferable[]) {
-    const request = structuredClone(message, { transfer });
+  postMessage(
+    message: InferenceWorkerRequest | Record<string, unknown>,
+    transfer: Transferable[] = [],
+  ) {
+    const cloned = structuredClone(message, { transfer });
+    if (!("kind" in cloned)) {
+      this.configs.push(cloned);
+      return;
+    }
+    const request = cloned as InferenceWorkerRequest;
     if (request.kind === "run") this.runRequests.push(request);
     const respond = () => {
       if (request.kind === "load") {
         ++this.loads;
         this.requestedProviders.push(request.provider);
         this.loadRequests.push(request);
+        if (this.loadFailure) {
+          this.onmessage?.({
+            data: {
+              id: request.id,
+              kind: "error",
+              message: "auxiliary load failed",
+            },
+          });
+          return;
+        }
         this.metadata = {
           inputNames: ["input"],
           outputNames: ["output"],
@@ -73,6 +97,7 @@ class FakeWorker {
             ? {}
             : { compatibilityFixes: request.compatibilityFixes }),
           actualProvider: request.provider === "webgpu" ? "webgpu" : "wasm",
+          ...this.loadMetadataOverride,
         };
         this.onmessage?.({
           data: {
@@ -83,6 +108,7 @@ class FakeWorker {
         });
       } else {
         ++this.runs;
+        this.onBeforeRun?.(this);
         if (this.outputFailure === "error") {
           this.onmessage?.({
             data: {
@@ -147,7 +173,8 @@ class FakeWorker {
         });
       }
     };
-    if (this.hold && request.kind === "run") this.held = respond;
+    if (this.holdLoad && request.kind === "load") this.heldLoad = respond;
+    else if (this.hold && request.kind === "run") this.held = respond;
     else if (this.runDelayMs > 0 && request.kind === "run")
       setTimeout(respond, this.runDelayMs);
     else queueMicrotask(respond);
@@ -159,7 +186,9 @@ class FakeWorker {
 
 // Count attempted posts, including calls whose mocked implementation throws.
 function runPostCalls(post: MockInstance<FakeWorker["postMessage"]>) {
-  return post.mock.calls.filter(([request]) => request.kind === "run");
+  return post.mock.calls.filter(
+    ([request]) => "kind" in request && request.kind === "run",
+  );
 }
 
 function input() {
@@ -205,13 +234,20 @@ function input() {
 function setup(
   patchCacheBudget?: number,
   modelShapes?: Pick<ModelMetadata, "inputShape" | "outputShape">,
+  maxWebGpuWorkers?: 1 | 2 | 3,
+  configureWorker?: (worker: FakeWorker, index: number) => void,
 ) {
   const workers: FakeWorker[] = [];
-  const controller = new OnnxInferenceController(() => {
-    const worker = new FakeWorker(modelShapes);
-    workers.push(worker);
-    return worker as unknown as Worker;
-  }, patchCacheBudget);
+  const controller = new OnnxInferenceController(
+    () => {
+      const worker = new FakeWorker(modelShapes);
+      configureWorker?.(worker, workers.length);
+      workers.push(worker);
+      return worker as unknown as Worker;
+    },
+    patchCacheBudget,
+    maxWebGpuWorkers,
+  );
   const file = {
     name: "local.onnx",
     size: 1,
@@ -242,6 +278,204 @@ const options = {
   originZYX: [2, 10, 10],
   shapeZYX: [17, 61, 61],
 };
+
+describe("pooled inference cancellation and source isolation", () => {
+  const shapes = {
+    inputShape: [1, 1, 4, 4, 4],
+    outputShape: [1, 1, 4, 4, 4],
+  };
+  const tile = (x: number, signal?: AbortSignal) => ({
+    originZYX: [0, 0, x],
+    shapeZYX: [4, 4, 4],
+    overlap: false,
+    signal,
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it("aborts unneeded queued patches during repeated panning without dispatching canceled history", async () => {
+    const { controller, workers, file } = setup(
+      undefined,
+      shapes,
+      2,
+      (w, i) => {
+        w.patchOriginBias = true;
+        if (i > 0) w.holdLoad = true;
+      },
+    );
+    const { source, origins } = input();
+    const read = vi.spyOn(source, "readPatch");
+    const canceledPatchSignals: AbortSignal[] = [];
+    try {
+      await controller.loadModel(file, "webgpu", false, "float16");
+      await controller.run(source, tile(0));
+      workers[0].hold = true;
+      const active = controller.run(source, tile(4));
+      void active.catch(() => {});
+      await vi.waitFor(() => expect(workers[0].held).toBeTypeOf("function"));
+
+      for (let i = 2; i <= 21; ++i) {
+        const abort = new AbortController();
+        const add = vi.spyOn(abort.signal, "addEventListener");
+        const remove = vi.spyOn(abort.signal, "removeEventListener");
+        const pending = controller.run(source, tile(i * 4, abort.signal));
+        const rejected = expect(pending).rejects.toThrow("pan away");
+        await vi.waitFor(() => expect(origins).toHaveLength(i + 1));
+        await Promise.resolve();
+        canceledPatchSignals.push(read.mock.calls.at(-1)![2]);
+        abort.abort(new DOMException("pan away", "AbortError"));
+        await rejected;
+        for (const [type, listener] of add.mock.calls) {
+          if (type === "abort")
+            expect(remove).toHaveBeenCalledWith("abort", listener);
+        }
+      }
+
+      expect(canceledPatchSignals).toHaveLength(20);
+      expect(canceledPatchSignals.every((signal) => signal.aborted)).toBe(true);
+      expect(workers[0].runRequests).toHaveLength(2);
+      workers[0].hold = false;
+      workers[0].held!();
+      const result = await active;
+      expect(result.data).toEqual(new Float32Array(64).fill(5));
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      expect(workers[0].runRequests).toHaveLength(2);
+      expect(workers[0].terminated).toBe(false);
+
+      // Canceled entries cannot poison a later visit to the same patch.
+      const revisited = await controller.run(source, tile(8));
+      expect(revisited.data).toEqual(new Float32Array(64).fill(9));
+      expect(origins).toHaveLength(23);
+      expect(workers[0].runRequests).toHaveLength(3);
+    } finally {
+      controller.dispose();
+      expect(workers.every((worker) => worker.terminated)).toBe(true);
+    }
+  });
+
+  it("rejects incompatible concurrent inputs without contaminating later predictions", async () => {
+    const { controller, workers, file } = setup(
+      undefined,
+      shapes,
+      2,
+      (w, i) => {
+        w.patchOriginBias = true;
+        if (i > 0) w.holdLoad = true;
+      },
+    );
+    const a = input();
+    const b = input();
+    const originalRead = b.source.readPatch.bind(b.source);
+    vi.spyOn(b.source, "readPatch").mockImplementation(async (...args) => {
+      const patch = await originalRead(...args);
+      for (let i = 0; i < patch.length; ++i) patch[i] += 1000;
+      return patch;
+    });
+    try {
+      await controller.loadModel(file, "webgpu", false, "float16");
+      await controller.run(a.source, tile(0));
+      workers[0].hold = true;
+      const left = controller.run(a.source, tile(4));
+      void left.catch(() => {});
+      await vi.waitFor(() => expect(workers[0].held).toBeTypeOf("function"));
+      let rejected: unknown;
+      let resolved = false;
+      void controller.run(b.source, tile(4)).then(
+        () => {
+          resolved = true;
+        },
+        (error) => {
+          rejected = error;
+        },
+      );
+      await vi.waitFor(() => expect(rejected).toBeInstanceOf(Error));
+      expect(resolved).toBe(false);
+      expect(rejected).not.toBeInstanceOf(ReferenceError);
+      expect((rejected as Error).message).toMatch(/concurrent|input|config/i);
+      expect(b.origins).toEqual([]);
+      workers[0].hold = false;
+      workers[0].held!();
+      expect((await left).data).toEqual(new Float32Array(64).fill(5));
+      const resultB = await controller.run(b.source, tile(4));
+      expect(resultB.data).toEqual(new Float32Array(64).fill(1005));
+      expect(b.origins).toEqual([[0, 0, 4]]);
+      const cachedB = await controller.run(b.source, tile(4));
+      expect(cachedB.data).toEqual(new Float32Array(64).fill(1005));
+      expect(b.origins).toEqual([[0, 0, 4]]);
+    } finally {
+      controller.dispose();
+    }
+  });
+
+  it("hands a freed slot past an aborted waiter and cleans up surviving caller listeners", async () => {
+    const { controller, workers, file } = setup(
+      undefined,
+      shapes,
+      2,
+      (w, i) => {
+        w.patchOriginBias = true;
+        if (i > 0) w.holdLoad = true;
+      },
+    );
+    const { source, origins } = input();
+    const firstAbort = new AbortController();
+    const skippedAbort = new AbortController();
+    const lastAbort = new AbortController();
+    const firstAdd = vi.spyOn(firstAbort.signal, "addEventListener");
+    const firstRemove = vi.spyOn(firstAbort.signal, "removeEventListener");
+    const lastAdd = vi.spyOn(lastAbort.signal, "addEventListener");
+    const lastRemove = vi.spyOn(lastAbort.signal, "removeEventListener");
+    try {
+      await controller.loadModel(file, "webgpu", false, "float16");
+      await controller.run(source, tile(0));
+      workers[0].hold = true;
+      const first = controller.run(source, tile(4, firstAbort.signal));
+      void first.catch(() => {});
+      await vi.waitFor(() => expect(workers[0].held).toBeTypeOf("function"));
+      const skipped = controller.run(source, tile(8, skippedAbort.signal));
+      const skippedRejected =
+        expect(skipped).rejects.toThrow("skip queued tile");
+      await vi.waitFor(() => expect(origins).toHaveLength(3));
+      const last = controller.run(source, tile(12, lastAbort.signal));
+      let lastSettled = false;
+      void last.then(
+        () => {
+          lastSettled = true;
+        },
+        () => {
+          lastSettled = true;
+        },
+      );
+      await vi.waitFor(() => expect(origins).toHaveLength(4));
+      skippedAbort.abort(new DOMException("skip queued tile", "AbortError"));
+      await skippedRejected;
+      expect(workers[0].runRequests).toHaveLength(2);
+      workers[0].hold = false;
+      workers[0].held!();
+      expect((await first).data).toEqual(new Float32Array(64).fill(5));
+      await vi.waitFor(() => expect(lastSettled).toBe(true));
+      expect((await last).data).toEqual(new Float32Array(64).fill(13));
+      expect(workers[0].runRequests.map((request) => request.input[0])).toEqual(
+        [0, 4, 12],
+      );
+      expect(firstAbort.signal.aborted).toBe(false);
+      expect(lastAbort.signal.aborted).toBe(false);
+      for (const [add, remove] of [
+        [firstAdd, firstRemove],
+        [lastAdd, lastRemove],
+      ]) {
+        expect(add).toHaveBeenCalled();
+        for (const [type, listener] of add.mock.calls) {
+          if (type === "abort")
+            expect(remove).toHaveBeenCalledWith("abort", listener);
+        }
+      }
+      expect(workers[0].terminated).toBe(false);
+    } finally {
+      controller.dispose();
+      expect(workers.every((worker) => worker.terminated)).toBe(true);
+    }
+  });
+});
 
 describe("OnnxInferenceController", () => {
   afterEach(() => vi.restoreAllMocks());
@@ -2471,8 +2705,10 @@ describe("OnnxInferenceController", () => {
     const { controller, file } = setup();
     await controller.loadModel(file);
     const { source } = input();
-    const prefetched: { origin: readonly number[]; shape: readonly number[] }[] =
-      [];
+    const prefetched: {
+      origin: readonly number[];
+      shape: readonly number[];
+    }[] = [];
     (source as PreparedInferenceInput).prefetchVolume = vi.fn(
       (origin, shape) => {
         prefetched.push({ origin: [...origin], shape: [...shape] });
@@ -2504,5 +2740,415 @@ describe("OnnxInferenceController", () => {
       expect(Number.isFinite(second.data[i])).toBe(true);
     }
     controller.dispose();
+  });
+
+  describe("gated demand-driven WebGPU worker pool", () => {
+    it("defaults to 1 worker when NEUROGLANCER_INFERENCE_MAX_WEBGPU_WORKERS is omitted and hard-pins CPU to 1 worker", async () => {
+      const def = setup();
+      await def.controller.loadModel(def.file, "webgpu", undefined, "float16");
+      const { source } = input();
+      await def.controller.run(source, { ...options, shapeZYX: [16, 60, 60] });
+      expect(def.workers).toHaveLength(1);
+      expect(def.controller.maxConcurrentRuns).toBe(1);
+      expect(def.controller.supportsRunSignal).toBe(false);
+      def.controller.dispose();
+
+      const cpu = setup(undefined, undefined, 3, (w) => {
+        w.runDelayMs = 2;
+      });
+      await cpu.controller.loadModel(cpu.file, "cpu");
+      await cpu.controller.run(source, { ...options, shapeZYX: [16, 60, 60] });
+      expect(cpu.workers).toHaveLength(1);
+      expect(cpu.controller.maxConcurrentRuns).toBe(1);
+      expect(cpu.controller.supportsRunSignal).toBe(false);
+      cpu.controller.dispose();
+    });
+
+    it("scales WebGPU workers only after primary first-run validation, deduplicates shared patches, and matches single-worker blends bit-for-bit", async () => {
+      const single = setup(undefined, undefined, 1, (w) => {
+        w.patchOriginBias = true;
+      });
+      await single.controller.loadModel(
+        single.file,
+        "webgpu",
+        undefined,
+        "float16",
+      );
+      const { source: srcSingle } = input();
+      const refLeft = await single.controller.run(srcSingle, {
+        originZYX: [2, 10, 10],
+        shapeZYX: [16, 60, 60],
+      });
+      const refRight = await single.controller.run(srcSingle, {
+        originZYX: [2, 10, 50],
+        shapeZYX: [16, 60, 60],
+      });
+      single.controller.dispose();
+
+      // Single-patch WebGPU run never spawns auxiliary workers.
+      const onePatch = setup(undefined, undefined, 3);
+      await onePatch.controller.loadModel(
+        onePatch.file,
+        "webgpu",
+        undefined,
+        "float16",
+      );
+      const { source: srcOne } = input();
+      await onePatch.controller.run(srcOne, {
+        originZYX: [2, 10, 10],
+        shapeZYX: [16, 60, 60],
+        overlap: false,
+      });
+      expect(onePatch.workers).toHaveLength(1);
+      onePatch.controller.dispose();
+
+      // Multi-patch concurrent WebGPU runs: hold primary's first run to prove
+      // no auxiliary worker is created before canonical execution is validated.
+      const pool2 = setup(undefined, undefined, 3, (w, idx) => {
+        w.patchOriginBias = true;
+        if (idx === 0) {
+          w.loadMetadataOverride = {
+            actualProvider: "webgpu",
+            requestedPrecision: "float16",
+            actualPrecision: "float16",
+          };
+          w.hold = true;
+        } else {
+          w.runDelayMs = 3;
+        }
+      });
+      await pool2.controller.loadModel(
+        pool2.file,
+        "auto",
+        undefined,
+        "float16",
+      );
+      expect(pool2.workers).toHaveLength(1);
+      expect(pool2.controller.maxConcurrentRuns).toBe(1);
+
+      const { source: srcPool } = input();
+      const leftPromise = pool2.controller.run(srcPool, {
+        originZYX: [2, 10, 10],
+        shapeZYX: [16, 60, 60],
+      });
+      await vi.waitFor(() =>
+        expect(pool2.workers[0].held).toBeTypeOf("function"),
+      );
+      // Before primary's Patch 0 finishes, zero auxiliary workers exist!
+      expect(pool2.workers).toHaveLength(1);
+
+      // Release Patch 0 with slight runDelayMs on subsequent patches to trigger contention.
+      pool2.workers[0].hold = false;
+      pool2.workers[0].runDelayMs = 20;
+      pool2.workers[0].held!();
+      await vi.waitFor(
+        () => expect(pool2.controller.maxConcurrentRuns).toBe(6),
+        { interval: 1 },
+      );
+      const rightPromise = pool2.controller.run(srcPool, {
+        originZYX: [2, 10, 50],
+        shapeZYX: [16, 60, 60],
+      });
+
+      const [gotLeft, gotRight] = await Promise.all([
+        leftPromise,
+        rightPromise,
+      ]);
+      expect(pool2.workers.length).toBeGreaterThan(1);
+      expect(pool2.workers.length).toBeLessThanOrEqual(3);
+      for (const aux of pool2.workers.slice(1)) {
+        expect(aux.configs).toEqual([{ wasmThreads: 1 }]);
+        expect(aux.loadRequests[0]).toMatchObject({
+          provider: "webgpu",
+          precision: "float16",
+        });
+      }
+      // Two adjacent 16x60x60 tiles span 2 * 2 * 3 = 12 unique contexts (not 16).
+      const totalWorkerRuns = pool2.workers.reduce((s, w) => s + w.runs, 0);
+      expect(totalWorkerRuns).toBe(12);
+      expect(gotLeft.data).toEqual(refLeft.data);
+      expect(gotRight.data).toEqual(refRight.data);
+      pool2.controller.dispose();
+    });
+
+    it("never spawns WebGPU auxiliary workers or mixes precisions when primary auto falls back to CPU FP32 on first run", async () => {
+      const { controller, workers, file } = setup(
+        undefined,
+        undefined,
+        3,
+        (w, idx) => {
+          if (idx === 0) {
+            w.loadMetadataOverride = {
+              actualProvider: "webgpu",
+              requestedPrecision: "float16",
+              actualPrecision: "float16",
+            };
+            w.onBeforeRun = (self) => {
+              if (self.runs === 1) {
+                self.metadata = {
+                  ...self.metadata,
+                  actualProvider: "wasm",
+                  actualPrecision: "float32",
+                  fallbackReason: "WebGPU kernel failed on first run",
+                };
+              }
+            };
+            w.runDelayMs = 2;
+          }
+        },
+      );
+      await controller.loadModel(file, "auto", undefined, "float16");
+      const { source } = input();
+      const result = await controller.run(source, {
+        originZYX: [2, 10, 10],
+        shapeZYX: [16, 60, 60],
+      });
+      expect(workers).toHaveLength(1);
+      expect(controller.maxConcurrentRuns).toBe(1);
+      expect(controller.supportsRunSignal).toBe(false);
+      expect(result.provenance).toMatchObject({
+        requestedProvider: "auto",
+        actualProvider: "wasm",
+        actualPrecision: "float32",
+      });
+      controller.dispose();
+    });
+
+    it("caps auxiliary scaling and finishes on primary if auxiliary load fails or reports mismatched metadata", async () => {
+      for (const mode of ["load-error", "precision-mismatch"] as const) {
+        const { controller, workers, file } = setup(
+          undefined,
+          undefined,
+          3,
+          (w, idx) => {
+            w.runDelayMs = 3;
+            if (idx >= 1) {
+              if (mode === "load-error") w.loadFailure = true;
+              else w.loadMetadataOverride = { actualPrecision: "float32" };
+            }
+          },
+        );
+        await controller.loadModel(file, "webgpu", undefined, "float16");
+        const { source } = input();
+        const res = await controller.run(source, {
+          originZYX: [2, 10, 10],
+          shapeZYX: [16, 60, 60],
+        });
+        expect(res.data.length).toBe(4 * 16 * 60 * 60);
+        expect(workers.length).toBe(2);
+        expect(workers[1].terminated).toBe(true);
+        expect(workers[0].runs).toBe(8);
+        controller.dispose();
+      }
+    });
+
+    it("refuses to mix or cache output when an auxiliary worker diverges at runtime, retires it, and leaves primary healthy", async () => {
+      const { controller, workers, file } = setup(
+        undefined,
+        undefined,
+        3,
+        (w, idx) => {
+          w.runDelayMs = 4;
+          if (idx === 1) {
+            w.onBeforeRun = (self) => {
+              self.metadata = {
+                ...self.metadata,
+                actualPrecision: "float32",
+                precisionFallbackReason: "aux fell back to FP32 on run",
+              };
+            };
+          }
+        },
+      );
+      await controller.loadModel(file, "webgpu", undefined, "float16");
+      const { source } = input();
+      await expect(
+        controller.run(source, {
+          originZYX: [2, 10, 10],
+          shapeZYX: [16, 60, 60],
+        }),
+      ).rejects.toThrow(/diverged from canonical/i);
+      expect(workers[1].terminated).toBe(true);
+
+      // Retry the same scope on the remaining canonical sessions. A different
+      // source/geometry scope waits until already-dispatched work has drained.
+      expect(workers[0].terminated).toBe(false);
+      const recovered = await controller.run(source, {
+        originZYX: [2, 10, 10],
+        shapeZYX: [16, 60, 60],
+      });
+      expect(recovered.data.length).toBe(4 * 16 * 60 * 60);
+      controller.dispose();
+    });
+
+    it("caps auxiliary construction failure without detached rejections or repeated resource allocation", async () => {
+      let failedSpawns = 0;
+      const { controller, workers, file } = setup(
+        undefined,
+        undefined,
+        3,
+        (w, idx) => {
+          if (idx !== 0) {
+            ++failedSpawns;
+            throw new Error("Worker constructor resource failure");
+          }
+          w.runDelayMs = 4;
+        },
+      );
+      await controller.loadModel(file, "webgpu", undefined, "float16");
+      const { source } = input();
+      const roi = { originZYX: [2, 10, 10], shapeZYX: [16, 60, 60] };
+      const result = await controller.run(source, roi);
+      expect(result.data.length).toBe(4 * 16 * 60 * 60);
+      await controller.run(source, { ...roi, originZYX: [2, 10, 50] });
+      expect(failedSpawns).toBe(1);
+      expect(workers).toHaveLength(1);
+      expect(workers[0].terminated).toBe(false);
+      controller.dispose();
+    });
+
+    it("retires an auxiliary protocol error and retries the ROI on healthy canonical sessions", async () => {
+      const { controller, workers, file } = setup(
+        undefined,
+        undefined,
+        3,
+        (w, idx) => {
+          w.runDelayMs = 4;
+          if (idx === 1) w.outputFailure = "error";
+        },
+      );
+      await controller.loadModel(file, "webgpu", undefined, "float16");
+      const { source } = input();
+      const roi = { originZYX: [2, 10, 10], shapeZYX: [16, 60, 60] };
+      await expect(controller.run(source, roi)).rejects.toThrow(
+        "execution failed",
+      );
+      expect(workers[1].terminated).toBe(true);
+      expect(workers[1].runs).toBe(1);
+      expect(workers[0].terminated).toBe(false);
+      const result = await controller.run(source, roi);
+      expect(result.data.length).toBe(4 * 16 * 60 * 60);
+      expect(workers[1].runs).toBe(1);
+      expect(workers.length).toBeLessThanOrEqual(3);
+      controller.dispose();
+    });
+
+    it("cancels every owned session if the validated primary later changes execution precision", async () => {
+      const { controller, workers, file } = setup(
+        undefined,
+        undefined,
+        3,
+        (w, idx) => {
+          if (idx === 0)
+            w.onBeforeRun = (self) => {
+              if (self.runs === 2)
+                self.metadata = {
+                  ...self.metadata,
+                  actualPrecision: "float32",
+                };
+            };
+        },
+      );
+      await controller.loadModel(file, "webgpu", undefined, "float16");
+      const { source } = input();
+      const roi = {
+        originZYX: [2, 10, 10],
+        shapeZYX: [16, 60, 60],
+        overlap: false,
+      };
+      await controller.run(source, roi);
+      await expect(
+        controller.run(source, { ...roi, originZYX: [2, 10, 70] }),
+      ).rejects.toThrow(/canonical validation|canceled/);
+      expect(workers.every((w) => w.terminated)).toBe(true);
+      await controller.loadModel(file, "cpu");
+      const recovered = await controller.run(source, roi);
+      expect(recovered.provenance).toMatchObject({ actualProvider: "wasm" });
+      expect(workers.at(-1)!.runs).toBe(1);
+      controller.dispose();
+    });
+
+    it("immediately terminates a never-resolving auxiliary load on dispose, cancel, or model switch", async () => {
+      for (const action of ["dispose", "switch"] as const) {
+        const { controller, workers, file } = setup(
+          undefined,
+          undefined,
+          3,
+          (w, idx) => {
+            if (idx === 0) w.runDelayMs = 10;
+            if (idx === 1) w.holdLoad = true;
+          },
+        );
+        await controller.loadModel(file, "webgpu", undefined, "float16");
+        const { source } = input();
+        const pendingRun = controller.run(source, {
+          originZYX: [2, 10, 10],
+          shapeZYX: [16, 60, 60],
+        });
+        await vi.waitFor(() =>
+          expect(workers[1]?.heldLoad).toBeTypeOf("function"),
+        );
+        expect(workers[1].terminated).toBe(false);
+
+        if (action === "dispose") {
+          const rejected = expect(pendingRun).rejects.toThrow();
+          controller.dispose();
+          await rejected;
+          expect(workers[1].terminated).toBe(true);
+          expect(workers[0].terminated).toBe(true);
+        } else {
+          const rejected = expect(pendingRun).rejects.toThrow(/canceled/i);
+          controller.cancel();
+          await rejected;
+          expect(workers[1].terminated).toBe(true);
+          expect(workers[0].terminated).toBe(true);
+          await controller.loadModel(file, "cpu");
+          expect(workers.at(-1)!.requestedProviders).toEqual(["cpu"]);
+          controller.dispose();
+        }
+      }
+    });
+
+    it("cooperatively aborts a single caller via options.signal without canceling shared patches or terminating pooled workers", async () => {
+      const { controller, workers, file } = setup(
+        undefined,
+        undefined,
+        3,
+        (w) => {
+          w.runDelayMs = 5;
+        },
+      );
+      await controller.loadModel(file, "webgpu", undefined, "float16");
+      const { source } = input();
+      // Public run admission stays serial until the primary's first execution
+      // establishes a canonical provider/precision.
+      await controller.run(source, {
+        originZYX: [2, 10, 10],
+        shapeZYX: [16, 60, 60],
+        overlap: false,
+      });
+      const abortA = new AbortController();
+      const runA = controller.run(source, {
+        originZYX: [2, 10, 10],
+        shapeZYX: [16, 60, 60],
+        signal: abortA.signal,
+      });
+      let firstRunCountB = 0;
+      const runB = controller.run(source, {
+        originZYX: [2, 10, 50],
+        shapeZYX: [16, 60, 60],
+        onFirstRunDispatched: () => {
+          ++firstRunCountB;
+        },
+      });
+      await new Promise<void>((resolve) => setTimeout(resolve, 6));
+      abortA.abort(new DOMException("pan away", "AbortError"));
+      await expect(runA).rejects.toThrow("pan away");
+      const resB = await runB;
+      expect(resB.data.length).toBe(4 * 16 * 60 * 60);
+      expect(firstRunCountB).toBe(1);
+      expect(workers.every((w) => !w.terminated)).toBe(true);
+      controller.dispose();
+    });
   });
 });
