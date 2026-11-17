@@ -27,7 +27,10 @@ import type {
 import { makeModelGeometry } from "#src/inference/model.js";
 
 const mocks = vi.hoisted(() => ({
-  env: { wasm: {}, webgpu: {} },
+  env: {
+    wasm: {},
+    webgpu: {} as { device?: Promise<{ features: Set<string> }> },
+  },
   create: vi.fn(),
   run: vi.fn(),
   tensor: vi.fn(),
@@ -81,6 +84,7 @@ function mockModel(model: ModelMetadata) {
 beforeEach(async () => {
   vi.resetModules();
   vi.clearAllMocks();
+  delete mocks.env.webgpu.device;
   mocks.prepareFp16.mockResolvedValue({ model: new ArrayBuffer(2) });
   mockModel(metadata);
   const scope = {
@@ -247,6 +251,47 @@ describe("worker native runtime configuration", () => {
       });
     },
   );
+});
+
+describe("worker subgroup matrix detection", () => {
+  it.each([false, true])(
+    "reports submatrix matmul enabled=%s from ORT's device, not just adapter support",
+    async (enabled) => {
+      vi.stubGlobal("isSecureContext", true);
+      vi.stubGlobal("navigator", {
+        gpu: {
+          requestAdapter: async () => ({
+            features: new Set(["chromium-experimental-subgroup-matrix"]),
+          }),
+        },
+      });
+      mocks.env.webgpu.device = Promise.resolve({
+        features: new Set(
+          enabled ? ["chromium-experimental-subgroup-matrix"] : [],
+        ),
+      });
+      expect(await load(false, undefined, "webgpu")).toMatchObject({
+        actualProvider: "webgpu",
+        webgpuSubgroupMatrix: enabled,
+      });
+      mocks.run.mockResolvedValue({ [metadata.outputNames[0]]: rawOutput() });
+      expect(await run()).toMatchObject({
+        kind: "output",
+        metadata: { webgpuSubgroupMatrix: enabled },
+      });
+    },
+  );
+
+  it("does not report GPU features for CPU inference even if a GPU device exists", async () => {
+    mocks.env.webgpu.device = Promise.resolve({
+      features: new Set(["chromium-experimental-subgroup-matrix"]),
+    });
+    expect(await load()).not.toHaveProperty("webgpuSubgroupMatrix");
+    mocks.run.mockResolvedValue({ [metadata.outputNames[0]]: rawOutput() });
+    const result = await run();
+    expect(result.kind).toBe("output");
+    expect(result.metadata).not.toHaveProperty("webgpuSubgroupMatrix");
+  });
 });
 
 describe("worker precision plumbing", () => {

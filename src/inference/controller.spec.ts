@@ -25,6 +25,7 @@ import type {
   ModelMetadata,
 } from "#src/inference/model.js";
 import { makeModelGeometry } from "#src/inference/model.js";
+import { StatusMessage } from "#src/status.js";
 
 class FakeWorker {
   constructor(
@@ -244,6 +245,61 @@ const options = {
 
 describe("OnnxInferenceController", () => {
   afterEach(() => vi.restoreAllMocks());
+
+  it("warns once before GPU inference without submatrix matmul, not when loading the model", async () => {
+    const notify = vi
+      .spyOn(StatusMessage, "showTemporaryMessage")
+      .mockReturnValue(undefined!);
+    const { controller, workers, file } = setup(0);
+    try {
+      const loaded = await controller.loadModel(file, "webgpu");
+      loaded.webgpuSubgroupMatrix = false;
+      expect(notify).not.toHaveBeenCalled();
+      const post = vi.spyOn(workers[0], "postMessage");
+      const { source } = input();
+      await controller.run(source, options);
+      expect(workers[0].runs).toBeGreaterThan(1);
+      expect(notify).toHaveBeenCalledTimes(1);
+      expect(notify.mock.invocationCallOrder[0]).toBeLessThan(
+        post.mock.invocationCallOrder[0],
+      );
+      const [message, duration] = notify.mock.calls[0];
+      expect(message).toContain("without submatrix matmul");
+      expect(message).toContain("chrome://flags/#enable-unsafe-webgpu");
+      expect(message).toContain(
+        "On NVIDIA GPUs, also launch Chrome with --enable-dawn-features=vulkan_enable_f16_on_nvidia",
+      );
+      expect(duration).toBe(20_000);
+      await controller.run(source, options);
+      expect(notify).toHaveBeenCalledTimes(1);
+    } finally {
+      controller.dispose();
+    }
+  });
+
+  it.each([
+    ["webgpu", true],
+    ["webgpu", undefined],
+    ["cpu", false],
+  ] as const)(
+    "does not warn for provider=%s with subgroup matrix=%s",
+    async (provider, enabled) => {
+      const notify = vi
+        .spyOn(StatusMessage, "showTemporaryMessage")
+        .mockReturnValue(undefined!);
+      const { controller, workers, file } = setup();
+      try {
+        const loaded = await controller.loadModel(file, provider);
+        loaded.webgpuSubgroupMatrix = enabled;
+        const { source } = input();
+        await controller.run(source, options);
+        expect(workers[0].runs).toBeGreaterThan(0);
+        expect(notify).not.toHaveBeenCalled();
+      } finally {
+        controller.dispose();
+      }
+    },
+  );
 
   it("reuses a Wu mask independently of predictions, source and worker lifecycle", async () => {
     const generate = vi.spyOn(geometry, "makeWuPatchMask");

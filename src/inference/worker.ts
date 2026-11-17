@@ -19,6 +19,7 @@ import { cropNcdhwOutput } from "#src/inference/geometry.js";
 import type {
   InferenceWorkerRequest,
   InferenceWorkerResponse,
+  ModelMetadata,
 } from "#src/inference/model.js";
 import { validateModelGeometry } from "#src/inference/model.js";
 import { ProviderSession } from "#src/inference/provider.js";
@@ -52,6 +53,19 @@ const session = new ProviderSession(
   ort.env.wasm.numThreads!,
 );
 
+async function updateWebGpuFeatures(metadata: ModelMetadata) {
+  if (
+    metadata.actualProvider !== "webgpu" ||
+    metadata.webgpuSubgroupMatrix !== undefined
+  )
+    return;
+  const device = (await ort.env.webgpu.device) as
+    | { features: { has(feature: string): boolean } }
+    | undefined;
+  metadata.webgpuSubgroupMatrix =
+    device?.features.has("chromium-experimental-subgroup-matrix") ?? false;
+}
+
 function reply(
   response: InferenceWorkerResponse,
   transfer: Transferable[] = [],
@@ -69,6 +83,7 @@ async function handle(request: InferenceWorkerRequest) {
         request.compatibilityFixes,
         request.precision,
       );
+      await updateWebGpuFeatures(metadata);
       reply({ id, kind: "loaded", metadata });
     } else {
       const metadata = session.metadata;
@@ -92,6 +107,7 @@ async function handle(request: InferenceWorkerRequest) {
         outputs = await session.run({ [metadata.inputNames[0]]: tensor });
         // Auto may have replaced the GPU session with a validated CPU session.
         const current = session.metadata!;
+        await updateWebGpuFeatures(current);
         validateModelGeometry(current, request.geometry);
         const raw = outputs[current.outputNames[0]];
         if (

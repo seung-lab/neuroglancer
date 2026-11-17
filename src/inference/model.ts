@@ -51,6 +51,8 @@ export interface ModelMetadata extends ProviderMetadata {
   outputShape: readonly number[];
   initMs: number;
   threads: number;
+  /** Whether ORT's GPU device enabled experimental subgroup matrix operations. */
+  webgpuSubgroupMatrix?: boolean;
 }
 
 export const INPUT_SHAPE = [1, 1, 20, 80, 80] as const;

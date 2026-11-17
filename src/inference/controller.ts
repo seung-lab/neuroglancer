@@ -39,6 +39,7 @@ import {
   type InferenceWorkerResponse,
   type ModelMetadata,
 } from "#src/inference/model.js";
+import { StatusMessage } from "#src/status.js";
 
 export interface RunInferenceOptions {
   originZYX: number[];
@@ -66,6 +67,7 @@ export class OnnxInferenceController {
   private provider: InferenceProvider = "auto";
   private compatibilityFixes: boolean | undefined;
   private precision: InferencePrecision | undefined;
+  private warnedMissingSubgroupMatrix = false;
   private readonly patchCache = new Map<string, Float32Array>();
   private patchCacheBytes = 0;
   // Pure geometry only: independent of prediction cache invalidation/lifecycle.
@@ -476,6 +478,17 @@ export class OnnxInferenceController {
           for (let i = 0; i < patch.length; ++i) {
             if (!Number.isFinite(patch[i]))
               throw new Error("Inference input values must be finite");
+          }
+          if (
+            !this.warnedMissingSubgroupMatrix &&
+            this.metadata!.actualProvider === "webgpu" &&
+            this.metadata!.webgpuSubgroupMatrix === false
+          ) {
+            this.warnedMissingSubgroupMatrix = true;
+            StatusMessage.showTemporaryMessage(
+              "ONNX inference is running without submatrix matmul acceleration. Enable experimental WebGPU support (Unsafe WebGPU Support) at chrome://flags/#enable-unsafe-webgpu and restart Chrome. On NVIDIA GPUs, also launch Chrome with --enable-dawn-features=vulkan_enable_f16_on_nvidia. Requires compatible hardware and drivers.",
+              20_000,
+            );
           }
           return {
             response: await this.request(
