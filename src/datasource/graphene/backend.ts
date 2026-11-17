@@ -37,7 +37,9 @@ import {
   isBaseSegmentId,
   parseGrapheneError,
   getHttpSource,
+  joinBucketRow,
   MESH_MANIFEST_V2_ACCEPT,
+  splitBucketRow,
 } from "#src/datasource/graphene/base.js";
 import { decodeManifestChunk } from "#src/datasource/precomputed/backend.js";
 import { WithSharedKvStoreContextCounterpart } from "#src/kvstore/backend.js";
@@ -136,6 +138,29 @@ export class GrapheneMeshSource extends WithParameters(
       ? `${this.parameters.fragmentUrl}dynamic/`
       : this.parameters.fragmentUrl,
   );
+  // The buckets v2 manifests named, in the order first seen; never evicted, a
+  // few per table. A v2 fragment id names its bucket by index, per
+  // `joinBucketRow`, and is read from it.
+  private buckets: KvStoreWithPath[] = [];
+  private bucketIndices = new Map<string, number>();
+
+  private bucketIndex(bucket: string) {
+    let index = this.bucketIndices.get(bucket);
+    if (index === undefined) {
+      const { kvStoreContext } = this.sharedKvStoreContext;
+      index = this.buckets.push(kvStoreContext.getKvStore(`${bucket}/`)) - 1;
+      this.bucketIndices.set(bucket, index);
+    }
+    return index;
+  }
+
+  private bucket(index: number) {
+    const store = this.buckets[index];
+    if (store === undefined) {
+      throw new Error(`No v2 manifest named a mesh bucket at index ${index}`);
+    }
+    return store;
+  }
 
   addNewSegment(segment: bigint) {
     const { newSegments } = this;
@@ -176,30 +201,25 @@ export class GrapheneMeshSource extends WithParameters(
       manifestRequestCount.delete(chunkIdentifier);
     }
     if (response?.manifest_version >= 2) {
-      const fragments: string[] = [];
-      const { kvStoreContext } = this.sharedKvStoreContext;
-      for (const [bucket, list] of Object.entries<string[]>(
-        response.fragments,
-      )) {
-        const sharded = Number.isInteger(Number(list[0]?.split(":").pop()));
-        const store = kvStoreContext.getKvStore(`${bucket}/`);
-        if (sharded) {
-          this.initialKvStore = store;
-        } else {
-          this.dynamicKvStore = store;
-        }
-        fragments.push(...list);
-      }
+      const fragments = Object.entries<string[]>(response.fragments).flatMap(
+        ([bucket, rows]) => {
+          const index = this.bucketIndex(bucket);
+          return rows.map((row) => joinBucketRow(index, row));
+        },
+      );
       return decodeManifestChunk(chunk, { fragments });
     }
     return decodeManifestChunk(chunk, response);
   }
 
   async downloadFragment(chunk: FragmentChunk, signal: AbortSignal) {
+    const { index, row } = splitBucketRow(chunk.fragmentId!);
+    // A v1 id names no bucket, so it reads through the source's two stores.
+    const store = index === undefined ? undefined : this.bucket(index);
     const readResponse = await downloadFragment(
-      this.initialKvStore,
-      this.dynamicKvStore,
-      chunk.fragmentId!,
+      store ?? this.initialKvStore,
+      store ?? this.dynamicKvStore,
+      row,
       signal,
     );
     await decodeDracoFragmentChunk(

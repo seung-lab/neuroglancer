@@ -86,6 +86,23 @@ export function getGrapheneFragmentKey(fragmentId: string) {
   return { key: fragmentId, fragmentId: fragmentId };
 }
 
+// A v2 fragment id is `@`, its bucket's index in the mesh source, `:`, then the
+// row the manifest listed; a v1 id opens with `~` or a seg id, never `@`.
+export function joinBucketRow(index: number, row: string) {
+  return `@${index}:${row}`;
+}
+
+export function splitBucketRow(fragmentId: string) {
+  if (!fragmentId.startsWith("@")) {
+    return { index: undefined, row: fragmentId };
+  }
+  const colon = fragmentId.indexOf(":");
+  return {
+    index: Number(fragmentId.slice(1, colon)),
+    row: fragmentId.slice(colon + 1),
+  };
+}
+
 export const CHUNKED_GRAPH_LAYER_RPC_ID = "ChunkedGraphLayer";
 export const CHUNKED_GRAPH_RENDER_LAYER_UPDATE_SOURCES_RPC_ID =
   "ChunkedGraphLayer:updateSources";
