@@ -138,15 +138,25 @@ function half(bits: number): number {
   if (exponent === 255) fail("nonfinite FLOAT tensor value");
   const e = exponent - 127;
   if (e < -25) return sign;
-  const shift = e < -14 ? -e - 1 : 13;
   const significand = fraction | 0x800000;
-  const divisor = 2 ** shift;
-  let rounded = Math.floor(significand / divisor);
-  const remainder = significand % divisor;
-  if (remainder > divisor / 2 || (remainder === divisor / 2 && rounded % 2)) {
-    ++rounded;
+  let magnitude: number;
+  if (e >= -14) {
+    let rounded = significand >>> 13;
+    const remainder = significand & 0x1fff;
+    if (remainder > 0x1000 || (remainder === 0x1000 && (rounded & 1) !== 0)) {
+      ++rounded;
+    }
+    magnitude = ((e + 14) << 10) + rounded;
+  } else {
+    const shift = -e - 1;
+    let rounded = significand >>> shift;
+    const halfWay = 1 << (shift - 1);
+    const remainder = significand & ((halfWay << 1) - 1);
+    if (remainder > halfWay || (remainder === halfWay && (rounded & 1) !== 0)) {
+      ++rounded;
+    }
+    magnitude = rounded;
   }
-  const magnitude = e < -14 ? rounded : (e + 14) * 1024 + rounded;
   if (magnitude >= 0x7c00)
     fail("FLOAT tensor overflows finite FP16 (no clamping)");
   return sign | magnitude;
@@ -225,7 +235,7 @@ class Converter {
             fail("invalid float_data wire type");
           return f.data;
         });
-    const data = join(payloads);
+    const data = payloads.length === 1 ? payloads[0] : join(payloads);
     if (data.length % 4) fail("misaligned FLOAT payload");
     // Check dims/payload agreement without ever interpreting shape tensors.
     let elements = 1;
@@ -241,15 +251,20 @@ class Converter {
       }
     }
     if (elements !== data.length / 4) fail("FLOAT dimensions/payload mismatch");
-    const output = new Uint8Array(data.length / 2);
+    const count = data.length >>> 2;
+    const output = new Uint8Array(count * 2);
     const inputView = new DataView(
       data.buffer,
       data.byteOffset,
       data.byteLength,
     );
     const outputView = new DataView(output.buffer);
-    for (let i = 0; i < data.length / 4; ++i) {
-      outputView.setUint16(i * 2, half(inputView.getUint32(i * 4, true)), true);
+    for (let i = 0; i < count; ++i) {
+      outputView.setUint16(
+        i << 1,
+        half(inputView.getUint32(i << 2, true)),
+        true,
+      );
     }
     return join([
       ...fields
