@@ -31,6 +31,7 @@ import type { mat4 } from "#src/util/geom.js";
 import type { FetchOk, HttpError } from "#src/util/http_request.js";
 
 export const PYCG_APP_VERSION = 1;
+export const MESH_MANIFEST_V2_ACCEPT = "application/x.cave;manifest_version=2";
 export const GRAPHENE_MESH_NEW_SEGMENT_RPC_ID = "GrapheneMeshSource:NewSegment";
 
 export enum VolumeChunkEncoding {
@@ -59,6 +60,9 @@ export class MeshSourceParameters {
   lod: number;
   sharding: Array<ShardingParameters> | undefined;
   nBitsForLayerId: number;
+  // The dir under `fragmentUrl` a sharded source reads a v1 answer's
+  // unsharded fragments from.
+  dynamicMeshDir: string;
 
   static RPC_ID = "graphene/MeshSource";
 }
@@ -83,6 +87,23 @@ export function getGrapheneFragmentKey(fragmentId: string) {
     return { key: parts[0], fragmentId: parts[1] };
   }
   return { key: fragmentId, fragmentId: fragmentId };
+}
+
+// A v2 fragment id is `@`, its bucket's index in the mesh source, `:`, then the
+// row the manifest listed; a v1 id opens with `~` or a seg id, never `@`.
+export function joinBucketRow(index: number, row: string) {
+  return `@${index}:${row}`;
+}
+
+export function splitBucketRow(fragmentId: string) {
+  if (!fragmentId.startsWith("@")) {
+    return { index: undefined, row: fragmentId };
+  }
+  const colon = fragmentId.indexOf(":");
+  return {
+    index: Number(fragmentId.slice(1, colon)),
+    row: fragmentId.slice(colon + 1),
+  };
 }
 
 export const CHUNKED_GRAPH_LAYER_RPC_ID = "ChunkedGraphLayer";

@@ -37,6 +37,9 @@ import {
   isBaseSegmentId,
   parseGrapheneError,
   getHttpSource,
+  joinBucketRow,
+  MESH_MANIFEST_V2_ACCEPT,
+  splitBucketRow,
 } from "#src/datasource/graphene/base.js";
 import { decodeManifestChunk } from "#src/datasource/precomputed/backend.js";
 import { WithSharedKvStoreContextCounterpart } from "#src/kvstore/backend.js";
@@ -78,43 +81,33 @@ import {
 import type { RPC } from "#src/worker_rpc.js";
 import { registerSharedObject, registerRPC } from "#src/worker_rpc.js";
 
-function downloadFragmentWithSharding(
-  fragmentKvStore: KvStoreWithPath,
+function downloadFragment(
+  initialKvStore: KvStoreWithPath,
+  dynamicKvStore: KvStoreWithPath,
   fragmentId: string,
   signal: AbortSignal,
 ): Promise<ReadResponse> {
-  if (fragmentId && fragmentId.charAt(0) === "~") {
-    const parts = fragmentId.substring(1).split(":");
-    const byteRange = { offset: Number(parts[1]), length: Number(parts[2]) };
-    return readKvStore(
-      fragmentKvStore.store,
-      `${fragmentKvStore.path}initial/${parts[0]}`,
-      { signal, byteRange, throwIfMissing: true },
-    );
+  // A sharded fragment ends in `<shard>:<offset>:<length>`; an unsharded one ends in its
+  // bounding box, which is not a number.
+  const [shard, offset, length] = fragmentId.split(":").slice(-3);
+  if (!Number.isInteger(Number(length))) {
+    const file = fragmentId.startsWith("~")
+      ? fragmentId.substring(fragmentId.indexOf(":") + 1)
+      : fragmentId;
+    return readKvStore(dynamicKvStore.store, `${dynamicKvStore.path}${file}`, {
+      signal,
+      throwIfMissing: true,
+    });
   }
   return readKvStore(
-    fragmentKvStore.store,
-    `${fragmentKvStore.path}dynamic/${fragmentId}`,
-    { signal, throwIfMissing: true },
+    initialKvStore.store,
+    `${initialKvStore.path}${shard.replace("~", "")}`,
+    {
+      signal,
+      byteRange: { offset: Number(offset), length: Number(length) },
+      throwIfMissing: true,
+    },
   );
-}
-
-function downloadFragment(
-  fragmentKvStore: KvStoreWithPath,
-  fragmentId: string,
-  parameters: MeshSourceParameters,
-  signal: AbortSignal,
-): Promise<ReadResponse> {
-  if (parameters.sharding) {
-    return downloadFragmentWithSharding(fragmentKvStore, fragmentId, signal);
-  } else {
-    // TODO, is this change safe?
-    return readKvStore(
-      fragmentKvStore.store,
-      `${fragmentKvStore.path}${fragmentId}`,
-      { signal, throwIfMissing: true },
-    );
-  }
 }
 
 async function decodeDracoFragmentChunk(
@@ -137,9 +130,37 @@ export class GrapheneMeshSource extends WithParameters(
     this.sharedKvStoreContext.kvStoreContext,
     this.parameters.manifestUrl,
   );
-  fragmentKvStore = this.sharedKvStoreContext.kvStoreContext.getKvStore(
-    this.parameters.fragmentUrl,
+  initialKvStore = this.sharedKvStoreContext.kvStoreContext.getKvStore(
+    `${this.parameters.fragmentUrl}initial/`,
   );
+  dynamicKvStore = this.sharedKvStoreContext.kvStoreContext.getKvStore(
+    this.parameters.sharding
+      ? `${this.parameters.fragmentUrl}${this.parameters.dynamicMeshDir}/`
+      : this.parameters.fragmentUrl,
+  );
+  // The buckets v2 manifests named, in the order first seen; never evicted, a
+  // few per table. A v2 fragment id names its bucket by index, per
+  // `joinBucketRow`, and is read from it.
+  private buckets: KvStoreWithPath[] = [];
+  private bucketIndices = new Map<string, number>();
+
+  private bucketIndex(bucket: string) {
+    let index = this.bucketIndices.get(bucket);
+    if (index === undefined) {
+      const { kvStoreContext } = this.sharedKvStoreContext;
+      index = this.buckets.push(kvStoreContext.getKvStore(`${bucket}/`)) - 1;
+      this.bucketIndices.set(bucket, index);
+    }
+    return index;
+  }
+
+  private bucket(index: number) {
+    const store = this.buckets[index];
+    if (store === undefined) {
+      throw new Error(`No v2 manifest named a mesh bucket at index ${index}`);
+    }
+    return store;
+  }
 
   addNewSegment(segment: bigint) {
     const { newSegments } = this;
@@ -156,9 +177,12 @@ export class GrapheneMeshSource extends WithParameters(
       return decodeManifestChunk(chunk, { fragments: [] });
     }
     const { fetchOkImpl, baseUrl } = this.manifestHttpSource;
-    const manifestPath = `/manifest/${chunk.objectId}:${parameters.lod}?verify=1&prepend_seg_ids=1`;
+    const manifestPath = `/manifest/${chunk.objectId}:${parameters.lod}?verify=1&prepend_seg_ids=1&return_seg_ids=1`;
     const response = await (
-      await fetchOkImpl(baseUrl + manifestPath, { signal })
+      await fetchOkImpl(baseUrl + manifestPath, {
+        signal,
+        headers: { Accept: MESH_MANIFEST_V2_ACCEPT },
+      })
     ).json();
     const chunkIdentifier = manifestPath;
     if (newSegments.has(chunk.objectId)) {
@@ -176,19 +200,31 @@ export class GrapheneMeshSource extends WithParameters(
     } else {
       manifestRequestCount.delete(chunkIdentifier);
     }
+    if (response?.manifest_version >= 2) {
+      const fragments = Object.entries<string[]>(response.fragments).flatMap(
+        ([bucket, rows]) => {
+          const index = this.bucketIndex(bucket);
+          return rows.map((row) => joinBucketRow(index, row));
+        },
+      );
+      return decodeManifestChunk(chunk, { fragments });
+    }
     return decodeManifestChunk(chunk, response);
   }
 
   async downloadFragment(chunk: FragmentChunk, signal: AbortSignal) {
-    const { response } = await downloadFragment(
-      this.fragmentKvStore,
-      chunk.fragmentId!,
-      this.parameters,
+    const { index, row } = splitBucketRow(chunk.fragmentId!);
+    // A v1 id names no bucket, so it reads through the source's two stores.
+    const store = index === undefined ? undefined : this.bucket(index);
+    const readResponse = await downloadFragment(
+      store ?? this.initialKvStore,
+      store ?? this.dynamicKvStore,
+      row,
       signal,
     );
     await decodeDracoFragmentChunk(
       chunk,
-      new Uint8Array(await response.arrayBuffer()),
+      new Uint8Array(await readResponse.response.arrayBuffer()),
     );
   }
 
