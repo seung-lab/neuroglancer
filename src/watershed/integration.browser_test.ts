@@ -50,6 +50,7 @@ import { vec3 } from "#src/util/geom.js";
 import * as matrix from "#src/util/matrix.js";
 import type { Viewer } from "#src/viewer.js";
 import type { WatershedOptions } from "#src/watershed/base.js";
+import { prepareAffinityInput } from "#src/watershed/input.js";
 import { LiveWatershed } from "#src/watershed/live.js";
 import type { WatershedRecipe } from "#src/watershed/recipe.js";
 import { mswFixture } from "#tests/fixtures/msw_browser.js";
@@ -1734,6 +1735,67 @@ describe("regional live watershed (real WebGL, chunk RPC and native WASM)", () =
     ]);
     expect(native.chunks).toHaveLength(5);
   }, 90_000);
+
+  it("keeps fractional live inference placement separate from integer affinity reads", async () => {
+    const viewer = makeViewer();
+    const native = await precomputed(
+      "https://watershed-integration.invalid/two-channel",
+      [70, 32, 9],
+      [4, 6, -2],
+      [35, 32, 9],
+      2,
+      () => 0,
+    );
+    const raw = await addImage(viewer, native.url);
+    const input = prepareInferenceInput(raw.layer as ImageUserLayer, 0, 1);
+    cleanup.push(() => input.dispose());
+    // A rank-4 input and a 2x finer output: integral planner origins, but
+    // center-to-corner conversion places the publication half a voxel away.
+    const geometry = makeModelGeometry(
+      { inputShape: [1, 1, 2, 2, 2], outputShape: [1, 3, 5, 5, 5] },
+      [3e-8, 2e-8, 1e-8],
+      [1.5e-8, 1e-8, 0.5e-8],
+    );
+    const live = new LiveInference(
+      { run: vi.fn(), cancel: vi.fn() },
+      input,
+      undefined,
+      geometry,
+    );
+    const tile = vi
+      .spyOn(live, "readTile")
+      .mockImplementation(async ([, , x]) =>
+        Float32Array.from(
+          { length: 3 * 16 * 60 * 60 },
+          (_, i) => (x * 60 + (i % 60)) / 128,
+        ),
+      );
+    const publication = await publishLiveInference(viewer.chunkManager, live);
+    cleanup.push(() => publication.dispose());
+    const image = await addImage(viewer, publication.url);
+    expect([...viewer.coordinateSpace.value.scales]).toEqual(spacing);
+    expect(live.info.originZYX).toEqual([-5, 11, 7]);
+    expect(live.displayOriginZYX).toEqual([-4.5, 11.5, 7.5]);
+    const affinity = prepareAffinityInput(image.layer as ImageUserLayer);
+    cleanup.push(() => affinity.dispose());
+    expect(affinity.originXYZ).toEqual([7.5, 11.5, -4.5]);
+    expect(affinity.spacingXYZ).toEqual([0.5e-8, 1e-8, 1.5e-8]);
+    const watershed = new LiveWatershed(affinity);
+    cleanup.push(() => watershed.dispose());
+    expect(watershed.info.offsetXYZ).toEqual(affinity.originXYZ);
+    expect(
+      await affinity.readRegion(
+        [59, 0, 0],
+        [2, 1, 1],
+        [0, 1, 2],
+        new AbortController().signal,
+      ),
+    ).toEqual(Float32Array.from([59, 60, 59, 60, 59, 60], (x) => x / 128));
+    expect(tile.mock.calls.map(([grid]) => [...grid])).toEqual([
+      [0, 0, 0],
+      [0, 0, 1],
+    ]);
+  });
 
   it("waits for ALL ONNX affinities before ONE viewport watershed at download itemLimit=1 and revokes on ONNX invalidation with its image retained", async () => {
     const jobs = observeWatershedWorker();

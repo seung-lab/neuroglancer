@@ -16,7 +16,10 @@ import { DataType } from "#src/util/data_type.js";
 import { valueOrThrow } from "#src/util/error.js";
 import * as matrix from "#src/util/matrix.js";
 import { supportedUnits } from "#src/util/si_units.js";
-import { MAX_WATERSHED_VOXELS } from "#src/watershed/base.js";
+import {
+  isSafeWatershedPlacement,
+  MAX_WATERSHED_VOXELS,
+} from "#src/watershed/base.js";
 const AXES = ["x", "y", "z"] as const;
 
 export interface PreparedAffinityInput {
@@ -26,7 +29,7 @@ export interface PreparedAffinityInput {
   readonly channelCount: number;
   readonly spacingXYZ: readonly number[];
   readonly unitsXYZ: readonly string[];
-  /** Global OUTPUT grid offset: result position = lowerXYZ + originXYZ. */
+  /** Display translation in selected-grid voxels (possibly fractional); never a read offset. */
   readonly originXYZ: readonly number[];
   readonly signal: AbortSignal;
   isValid(): boolean;
@@ -355,6 +358,10 @@ export function prepareAffinityInput(
     const dims: number[] = [],
       spacing: number[] = [],
       origin: number[] = [];
+    // An inference publication has local integer tiles. Its model transform,
+    // not its chunk grid, carries the voxel-center to voxel-corner translation.
+    const inferencePlacement =
+      loadState.dataSource.canonicalUrl?.startsWith("inference://");
     for (const d of state.outputAxes.xyz) {
       const m = state.grid.dimensions[d];
       dims.push(chunkGrid.dimensions[m]);
@@ -372,22 +379,22 @@ export function prepareAffinityInput(
             (native.inputSpace.scales[m] * state.grid.scales[d])) +
           chunkGrid.translation[m]) /
         chunkGrid.scales[m];
-      // Absorb only float64 arithmetic noise, never a meaningful subvoxel shift.
-      const nearest = Math.round(offset);
-      const tolerance = Math.min(
-        1e-7,
-        8 * Number.EPSILON * Math.max(1, Math.abs(offset)),
-      );
-      if (Math.abs(offset - nearest) <= tolerance) offset = nearest;
+      if (!inferencePlacement) {
+        // Other volume adapters still require selected-grid alignment.
+        const nearest = Math.round(offset);
+        const tolerance = Math.min(
+          1e-7,
+          8 * Number.EPSILON * Math.max(1, Math.abs(offset)),
+        );
+        if (Math.abs(offset - nearest) <= tolerance) offset = nearest;
+        if (!Number.isSafeInteger(offset)) {
+          unsupported("native origin must align to selected-grid integers");
+        }
+      }
       origin.push(offset);
     }
-    if (
-      spacing.some((s) => !(s > 0) || !Number.isFinite(s)) ||
-      !origin.every(Number.isSafeInteger)
-    ) {
-      unsupported(
-        "spacing must be positive and native origin must align to selected-grid integers",
-      );
+    if (spacing.some((s) => !(s > 0) || !Number.isFinite(s))) {
+      unsupported("spacing must be finite and positive");
     }
     const lower: number[] = [],
       upper: number[] = [];
@@ -467,11 +474,11 @@ export function prepareAffinityInput(
     if (
       origin.some(
         (v, a) =>
-          !Number.isSafeInteger(v + lowerBoundXYZ[a]) ||
-          !Number.isSafeInteger(v + upperBoundXYZ[a]),
+          !isSafeWatershedPlacement(v, lowerBoundXYZ[a]) ||
+          !isSafeWatershedPlacement(v, upperBoundXYZ[a]),
       )
     ) {
-      unsupported("global output bounds exceed safe integer range");
+      unsupported("global output bounds exceed safe voxel placement precision");
     }
     const chunkSize = Array.from(spec.chunkDataSize);
     const specKey = () =>

@@ -19,6 +19,7 @@ import type { WatershedOptions, WatershedResult } from "#src/watershed/base.js";
 import {
   DEFAULT_WATERSHED_HALO,
   DEFAULT_WATERSHED_OPTIONS,
+  isSafeWatershedPlacement,
   validateWatershedChannels,
   validateWatershedHalo,
   validateWatershedOptions,
@@ -129,8 +130,11 @@ export class LiveWatershed {
           !Number.isSafeInteger(this.upperBound[i]) ||
           Math.ceil(n / LIVE_WATERSHED_TILE_SHAPE_XYZ[i]) > 2 ** 24,
       ) ||
-      offsetXYZ.length !== 3 ||
-      !offsetXYZ.every(Number.isSafeInteger) ||
+      this.lowerBound.some(
+        (n, i) =>
+          !isSafeWatershedPlacement(input.originXYZ[i], n) ||
+          !isSafeWatershedPlacement(input.originXYZ[i], this.upperBound[i]),
+      ) ||
       input.spacingXYZ.length !== 3 ||
       Array.from(input.spacingXYZ).some((n) => !Number.isFinite(n) || n <= 0) ||
       input.unitsXYZ.length !== 3

@@ -68,7 +68,10 @@ for **ALL affinity data needed for the current box**, including its clipped halo
 not just whichever display chunks arrive first. It does **not** wait for or read
 the whole dataset.
 
-The selected scale's native voxel spacing and origin are preserved. Arbitrary
+The selected scale's native voxel spacing and origin are preserved. An ONNX
+output may have a subvoxel display origin: watershed uses that placement for
+its viewport, labels, and meshes, not for storage addresses. A grid too large
+to retain that displacement in float32 viewer coordinates is rejected. Arbitrary
 user transforms, reflected grids, and resampling are not supported; unsupported
 mappings fail rather than silently changing the data. Native chunk indices and
 backend origins must be exactly representable as float32 integers. Mutable

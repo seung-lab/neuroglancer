@@ -18,6 +18,25 @@ export const MAX_WATERSHED_VOXELS = 2 ** 26;
 /** Default isotropic padding in native voxels on each side of the ROI. */
 export const DEFAULT_WATERSHED_HALO = 8;
 
+/** Check placement at each end of an integer storage interval. For a translated
+ * lattice, float32 viewer positions must retain the subvoxel phase (allowing
+ * at most 1e-7 voxel of roundoff); this never rounds the actual model transform. */
+export function isSafeWatershedPlacement(
+  origin: number,
+  index: number,
+): boolean {
+  const placed = origin + index;
+  if (Number.isInteger(origin)) {
+    return Number.isSafeInteger(origin) && Number.isSafeInteger(placed);
+  }
+  const displayed = Math.fround(placed);
+  return (
+    Number.isFinite(origin) &&
+    !Number.isInteger(displayed) &&
+    Math.abs(displayed - index - origin) <= 1e-7
+  );
+}
+
 export interface WatershedOptions {
   readonly highThreshold: number;
   readonly lowThreshold: number;

@@ -19,6 +19,7 @@ import type { WatershedOptions } from "#src/watershed/base.js";
 import {
   DEFAULT_WATERSHED_HALO,
   DEFAULT_WATERSHED_OPTIONS,
+  isSafeWatershedPlacement,
   MAX_WATERSHED_VOXELS,
   validateWatershedChannels,
   validateWatershedHalo,
@@ -27,6 +28,14 @@ import {
 } from "#src/watershed/base.js";
 
 describe("watershed validation", () => {
+  it("preserves subvoxel phase at native bounds without relaxing integer overflow checks", () => {
+    expect(isSafeWatershedPlacement(-4.5, 16)).toBe(true);
+    expect(isSafeWatershedPlacement(0.25, 2 ** 22)).toBe(false);
+    expect(isSafeWatershedPlacement(0.5, 2 ** 23)).toBe(false);
+    expect(isSafeWatershedPlacement(NaN, 0)).toBe(false);
+    expect(isSafeWatershedPlacement(Number.MAX_SAFE_INTEGER, 1)).toBe(false);
+  });
+
   it("defaults to an eight-native-voxel halo without adding a kernel option", () => {
     expect(DEFAULT_WATERSHED_HALO).toBe(8);
     expect(DEFAULT_WATERSHED_OPTIONS).not.toHaveProperty("halo");
