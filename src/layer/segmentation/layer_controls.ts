@@ -123,9 +123,54 @@ function getViewSpecificSkeletonRenderingControl(
 ): LayerControlDefinition<SegmentationUserLayer>[] {
   return [
     {
+      label: `Thickness (${viewName})`,
+      toolJson: `${json_keys.SKELETON_RENDERING_JSON_KEY}.useRadiusAttribute${viewName}`,
+      isValid: (layer) => layer.hasSkeletonsLayer,
+      makeControl(layer, context) {
+        const options = layer.displayState.skeletonRenderingOptions;
+        const { useRadiusAttribute } = options[`params${viewName}`];
+        const select = document.createElement("select");
+        select.setAttribute("aria-label", `Thickness (${viewName})`);
+        select.add(new Option("Fixed pixels", "pixels"));
+        const radiusOption = new Option("From radius attribute", "attribute");
+        select.add(radiusOption);
+        const readout = document.createElement("span");
+        readout.setAttribute("role", "status");
+        const container = document.createElement("div");
+        container.append(select, readout);
+        const update = () => {
+          const { withRadius, withoutRadius } =
+            layer.skeletonRadiusAvailability.value;
+          radiusOption.disabled = !withRadius;
+          select.value = useRadiusAttribute.value ? "attribute" : "pixels";
+          readout.textContent = !useRadiusAttribute.value
+            ? ""
+            : !withRadius
+              ? " No scalar float32 radius attribute; using fixed pixels."
+              : withoutRadius
+                ? " Sources without a scalar float32 radius use fixed pixels."
+                : viewName === "2d"
+                  ? " Cross-section"
+                  : "";
+        };
+        select.addEventListener("change", () => {
+          useRadiusAttribute.value = select.value === "attribute";
+        });
+        for (const signal of [
+          useRadiusAttribute.changed,
+          layer.skeletonRadiusAvailability.changed,
+        ]) {
+          context.registerDisposer(signal.add(update));
+        }
+        update();
+        return { control: select, controlElement: container };
+      },
+      activateTool() {},
+    },
+    {
       label: `Skeleton mode (${viewName})`,
       toolJson: `${json_keys.SKELETON_RENDERING_JSON_KEY}.mode${viewName}`,
-      isValid: (layer) => layer.hasSkeletonsLayer,
+      isValid: (layer) => layer.skeletonPixelThicknessControls[viewName],
       ...enumLayerControl<SegmentationUserLayer, SkeletonRenderMode>(
         (layer) =>
           layer.displayState.skeletonRenderingOptions[
@@ -136,7 +181,7 @@ function getViewSpecificSkeletonRenderingControl(
     {
       label: `Line width (${viewName})`,
       toolJson: `${json_keys.SKELETON_RENDERING_JSON_KEY}.lineWidth${viewName}`,
-      isValid: (layer) => layer.hasSkeletonsLayer,
+      isValid: (layer) => layer.skeletonPixelThicknessControls[viewName],
       toolDescription: `Skeleton line width (${viewName})`,
       title: `Skeleton line width (${viewName})`,
       ...rangeLayerControl((layer) => ({

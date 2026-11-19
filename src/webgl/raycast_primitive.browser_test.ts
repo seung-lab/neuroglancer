@@ -134,13 +134,16 @@ function drawCone(
   camera: Camera,
   spec: ConeSpec,
   fragmentMain: string,
-  options: { readonly coverWholeViewport?: boolean } = {},
+  options: {
+    readonly coverWholeViewport?: boolean;
+    readonly slice?: boolean;
+  } = {},
 ): Uint8Array {
   const { clipRadiusA = 0, clipRadiusB = 0 } = spec;
   return render(
     gl,
     camera,
-    defineRaycastConeShader,
+    (builder) => defineRaycastConeShader(builder, options.slice),
     `emitRaycastCone(${glslPoint(spec.endpointA)}, ${glslPoint(spec.endpointB)},
                      ${glslRadius(spec.radiusA)}, ${glslRadius(spec.radiusB)},
                      ${glslRadius(clipRadiusA)}, ${glslRadius(clipRadiusB)});
@@ -154,11 +157,12 @@ function drawSphere(
   camera: Camera,
   spec: SphereSpec,
   fragmentMain: string,
+  slice = false,
 ): Uint8Array {
   return render(
     gl,
     camera,
-    defineRaycastSphereShader,
+    (builder) => defineRaycastSphereShader(builder, slice),
     `emitRaycastSphere(${glslPoint(spec.center)}, ${glslRadius(spec.radius)});`,
     fragmentMain,
   );
@@ -217,6 +221,57 @@ function axialFractionByRow(pixels: Uint8Array): number[] {
   }
   return fractions;
 }
+
+describe("physical skeleton cross-sections", () => {
+  const shade =
+    "if (!raycastSliceContainsPoint(getRaycastSlicePoint())) discard; out_color = vec4(1.0);";
+  const camera = {
+    viewportPixels: 100,
+    projection: mat4.ortho(mat4.create(), -1, 1, -1, 1, -2, 2),
+  };
+  it("draws the smaller off-center sphere section and no disk outside the sphere", () => {
+    webglTest((gl) => {
+      const pixels = (z: number) =>
+        coveredFraction(
+          drawSphere(
+            gl,
+            camera,
+            { center: [0, 0, z], radius: 0.5 },
+            shade,
+            true,
+          ),
+        );
+      expect(pixels(0)).toBeCloseTo((Math.PI * 0.25) / 4, 2);
+      expect(pixels(0.4)).toBeCloseTo((Math.PI * 0.09) / 4, 2);
+      expect(pixels(0.6)).toBe(0);
+    });
+  });
+  it("draws the interior of a tapered edge only where it intersects the plane", () => {
+    webglTest((gl) => {
+      const points = (z: number) =>
+        drawCone(
+          gl,
+          camera,
+          {
+            endpointA: [-0.8, 0, z],
+            endpointB: [0.8, 0, z],
+            radiusA: 0.1,
+            radiusB: 0.5,
+          },
+          shade,
+          { slice: true },
+        );
+      const red = (pixels: Uint8Array, x: number, y: number) =>
+        pixels[(y * 100 + x) * 4];
+      const section = points(0.2);
+      expect(red(section, 25, 50)).toBe(0);
+      expect(red(section, 75, 50)).toBe(255);
+      expect(red(section, 75, 63)).toBe(255);
+      expect(red(section, 75, 75)).toBe(0);
+      expect(coveredFraction(points(0.6))).toBe(0);
+    });
+  });
+});
 
 describe("raycast cone", () => {
   it.each([

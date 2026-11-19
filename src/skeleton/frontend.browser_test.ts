@@ -20,6 +20,7 @@ import {
   FramebufferConfiguration,
   makeTextureBuffers,
 } from "#src/webgl/offscreen.js";
+import { drawQuads } from "#src/webgl/quad.js";
 import type { ShaderBuilder } from "#src/webgl/shader.js";
 import { setControlsInShader } from "#src/webgl/shader_ui_controls.js";
 import {
@@ -40,6 +41,7 @@ void emit(vec4 color, highp uint pickId) {
 function makeSkeletonShaderTest(
   resources: RefCounted,
   targetIsSliceView: boolean,
+  scalarAttributes: string[] = [],
 ) {
   const display = resources.registerDisposer(
     new DisplayContext(document.createElement("div")),
@@ -61,6 +63,13 @@ function makeSkeletonShaderTest(
         webglDataType: gl.FLOAT,
         glslDataType: "vec3",
       },
+      ...scalarAttributes.map((name) => ({
+        name,
+        dataType: DataType.FLOAT32,
+        numComponents: 1,
+        webglDataType: gl.FLOAT,
+        glslDataType: "float",
+      })),
     ],
     redrawNeeded: new NullarySignal(),
     visibility: new VisibilityPriorityAggregator(),
@@ -78,6 +87,8 @@ function makeSkeletonShaderTest(
       viewProjectionMat: mat4.create(),
       width: 9,
       height: 9,
+      invViewMatrix: mat4.create(),
+      displayDimensionRenderInfo: viewer.displayDimensionRenderInfo.value,
     },
   } as Parameters<SliceViewPanelSkeletonLayer["draw"]>[0] &
     Parameters<PerspectiveViewSkeletonLayer["draw"]>[0];
@@ -93,6 +104,113 @@ function makeSkeletonShaderTest(
     renderContext,
   };
 }
+
+it("detects radius by name and transforms stored-model slice thickness", () => {
+  const resources = new RefCounted();
+  try {
+    const { displayState, gl, renderHelper, renderContext } =
+      makeSkeletonShaderTest(resources, true, ["other", "radius"]);
+    const { params2d, shader: userShader } =
+      displayState.skeletonRenderingOptions;
+    params2d.useRadiusAttribute.value = true;
+    userShader.value = "void main() { emitRGB(vec3(1.0)); }";
+    const result = renderHelper.nodeShaderGetter(emitColor);
+    expect(result.fallback).toBe(false);
+    const shader = result.shader!;
+    const framebuffer = resources.registerDisposer(
+      new FramebufferConfiguration(gl, {
+        colorBuffers: makeTextureBuffers(gl, 1),
+      }),
+    );
+    framebuffer.bind(9, 9);
+    gl.viewport(0, 0, 9, 9);
+    gl.disable(gl.BLEND);
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    shader.bind();
+    const model = mat4.fromScaling(mat4.create(), [2, 1, 1]);
+    renderHelper.beginLayer(gl, shader, true, renderContext, model, true);
+    for (const [index, values] of [
+      [0, [0, 0, 0]],
+      [2, [0.3]],
+    ] as const) {
+      const texture = gl.createTexture();
+      resources.registerDisposer(() => gl.deleteTexture(texture));
+      const unit = gl.getUniform(
+        shader.program,
+        shader.uniform(`uVertexAttributeSampler${index}`)!,
+      ) as number;
+      gl.activeTexture(gl.TEXTURE0 + unit);
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      setOneDimensionalTextureData(
+        gl,
+        computeTextureFormat(
+          new TextureFormat(),
+          DataType.FLOAT32,
+          values.length,
+        ),
+        new Float32Array(values),
+      );
+    }
+    drawQuads(gl, 1, 1);
+    const pixel = new Uint8Array(4);
+    const red = (x: number, y: number) => {
+      gl.readPixels(x, y, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+      return pixel[0];
+    };
+    expect(red(6, 4)).toBe(255);
+    expect(red(4, 6)).toBe(0);
+  } finally {
+    resources.dispose();
+  }
+});
+
+it("keeps the pixel path for skeletons without a radius attribute", () => {
+  const resources = new RefCounted();
+  try {
+    const { displayState, renderHelper } = makeSkeletonShaderTest(
+      resources,
+      true,
+      ["other"],
+    );
+    displayState.skeletonRenderingOptions.params2d.useRadiusAttribute.value = true;
+    const result = renderHelper.edgeShaderGetter(emitColor);
+    expect(result.shader).not.toBeNull();
+    expect(result.extraParameters.raycast).toBe(false);
+  } finally {
+    resources.dispose();
+  }
+});
+
+it("builds 3D edge and node shaders for stored-model radii", () => {
+  const resources = new RefCounted();
+  try {
+    const { displayState, renderHelper } = makeSkeletonShaderTest(
+      resources,
+      false,
+      ["radius"],
+    );
+    displayState.skeletonRenderingOptions.params3d.useRadiusAttribute.value = true;
+    const emitter = (builder: ShaderBuilder) => {
+      builder.addOutputBuffer("vec4", "outColor", 0);
+      builder.addFragmentCode(`
+void emit(vec4 color, highp float depth, highp uint pickId) {
+  outColor = color;
+}
+`);
+    };
+    for (const getShader of [
+      renderHelper.edgeShaderGetter,
+      renderHelper.nodeShaderGetter,
+    ]) {
+      const { shader, fallback } = getShader(emitter);
+      expect(fallback).toBe(false);
+      expect(shader?.uniform("uRaycastNormalMatrix")).toBeTruthy();
+    }
+  } finally {
+    resources.dispose();
+  }
+});
 
 describe.each([true, false])(
   "skeleton control namespaces with targetIsSliceView=%s",
@@ -269,7 +387,7 @@ vec4 segmentColor(vec4 color, bool hasProperties, bool isStated) {
               renderHelper.beginLayer(
                 gl,
                 shader,
-                result.extraParameters,
+                result.extraParameters.raycast,
                 renderContext,
                 mat4.create(),
               );
@@ -283,7 +401,7 @@ vec4 segmentColor(vec4 color, bool hasProperties, bool isStated) {
               renderHelper.setEdgeSizeUniforms(
                 gl,
                 shader,
-                result.extraParameters,
+                result.extraParameters.raycast,
                 renderContext.projectionParameters,
                 /*lineWidth=*/ 3,
                 /*nodeDiameter=*/ 0,

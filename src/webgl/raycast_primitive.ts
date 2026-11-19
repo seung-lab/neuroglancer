@@ -18,11 +18,9 @@
  * @file GLSL for raycast primitives. A primitive draws a camera-facing quad, and
  * its fragment shader casts a ray to find the depth and lighting of the surface.
  *
- * Positions, radii, normals and `uLightDirection` are in the space that
- * `uProjection` maps to clip space.
- *
- * That space must reach clip space through a rotation, a uniform scale and the
- * projection only, because an anisotropic scale draws a sphere as an ellipsoid.
+ * Positions and radii are in the space that `uProjection` maps to clip space.
+ * If this space is anisotropically scaled, spheres appear as ellipsoids. Set
+ * `raycastNormalMatrix` to bring normals into the space of `uLightDirection`.
  *
  * That space must also be centred near the camera, because float32 cannot resolve
  * a radius of a few units against coordinates of 1e4. `mat4` is float32 too, so
@@ -61,6 +59,7 @@ struct RaycastResult {
 
 highp float raycastSurfaceDepth = 0.0;
 highp float raycastLightingFactor = 1.0;
+highp mat3 raycastNormalMatrix = mat3(1.0);
 
 RaycastRay getRaycastRayThroughFragment() {
   highp vec2 ndc = (gl_FragCoord.xy / uViewportSize) * 2.0 - 1.0;
@@ -71,12 +70,17 @@ RaycastRay getRaycastRayThroughFragment() {
   ray.direction = normalize(midClip.xyz / midClip.w - ray.origin);
   return ray;
 }
+highp vec3 getRaycastSlicePoint() {
+  highp vec2 ndc = (gl_FragCoord.xy / uViewportSize) * 2.0 - 1.0;
+  highp vec4 point = uInvProjection * vec4(ndc, 0.0, 1.0);
+  return point.xyz / point.w;
+}
 highp float getRaycastWindowDepth(highp vec3 point) {
   highp vec4 clip = uProjection * vec4(point, 1.0);
   return 0.5 * (clip.z / clip.w) + 0.5;
 }
 highp float getRaycastSurfaceLightingFactor(highp vec3 normal) {
-  return abs(dot(normalize(normal), uLightDirection.xyz)) + uLightDirection.w;
+  return abs(dot(normalize(raycastNormalMatrix * normal), uLightDirection.xyz)) + uLightDirection.w;
 }
 RaycastResult raycastMiss() {
   RaycastResult result;

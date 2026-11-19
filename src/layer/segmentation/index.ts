@@ -86,6 +86,7 @@ import { SegmentationGraphSourceTab } from "#src/segmentation_graph/source.js";
 import { SharedDisjointUint64Sets } from "#src/shared_disjoint_sets.js";
 import { SharedWatchableValue } from "#src/shared_watchable_value.js";
 import {
+  isSkeletonRadiusAttribute,
   PerspectiveViewSkeletonLayer,
   SkeletonLayer,
   SkeletonRenderingOptions,
@@ -1057,6 +1058,54 @@ export class SegmentationUserLayer extends Base {
       { changed: this.layersChanged, value: this.renderLayers },
     ),
   );
+
+  readonly skeletonRadiusAvailability = this.registerDisposer(
+    makeCachedLazyDerivedWatchableValue(
+      (layers) => {
+        let withRadius = false;
+        let withoutRadius = false;
+        for (const layer of layers) {
+          if (!(layer instanceof PerspectiveViewSkeletonLayer)) continue;
+          if (
+            isSkeletonRadiusAttribute(
+              layer.base.source.vertexAttributes.get("radius"),
+            )
+          ) {
+            withRadius = true;
+          } else {
+            withoutRadius = true;
+          }
+        }
+        return { withRadius, withoutRadius };
+      },
+      { changed: this.layersChanged, value: this.renderLayers },
+    ),
+  );
+
+  readonly skeletonPixelThicknessControls = {
+    "2d": this.registerDisposer(
+      makeCachedDerivedWatchableValue(
+        ({ withRadius, withoutRadius }, physical) =>
+          withoutRadius || (withRadius && !physical),
+        [
+          this.skeletonRadiusAvailability,
+          this.displayState.skeletonRenderingOptions.params2d
+            .useRadiusAttribute,
+        ],
+      ),
+    ),
+    "3d": this.registerDisposer(
+      makeCachedDerivedWatchableValue(
+        ({ withRadius, withoutRadius }, physical) =>
+          withoutRadius || (withRadius && !physical),
+        [
+          this.skeletonRadiusAvailability,
+          this.displayState.skeletonRenderingOptions.params3d
+            .useRadiusAttribute,
+        ],
+      ),
+    ),
+  };
 
   readonly getSkeletonLayer = () => {
     for (const layer of this.renderLayers) {

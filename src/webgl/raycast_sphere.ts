@@ -137,10 +137,22 @@ RaycastResult intersectRaycastPrimitive() {
 }
 `;
 
-export function defineRaycastSphereShader(builder: ShaderBuilder) {
+export function defineRaycastSphereShader(
+  builder: ShaderBuilder,
+  slice = false,
+) {
   builder.require(raycastPrimitiveCoreModule);
   // xyz: center, w: radius.
   builder.addVarying("highp vec4", "vSphere", "flat");
   builder.addVertexCode(glsl_emitRaycastSphere);
-  builder.addFragmentCode(glsl_intersectRaycastSphere);
+  builder.addFragmentCode(
+    slice
+      ? `
+bool raycastSliceContainsPoint(highp vec3 point) {
+  highp vec3 offset = point - vSphere.xyz;
+  return dot(offset, offset) <= vSphere.w * vSphere.w;
+}
+`
+      : glsl_intersectRaycastSphere,
+  );
 }

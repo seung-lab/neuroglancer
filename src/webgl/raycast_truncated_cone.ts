@@ -173,7 +173,7 @@ RaycastResult intersectRaycastPrimitive() {
 }
 `;
 
-export function defineRaycastConeShader(builder: ShaderBuilder) {
+export function defineRaycastConeShader(builder: ShaderBuilder, slice = false) {
   defineRaycastAxialObbQuad(builder);
   builder.addVarying("highp vec3", "vConeEndpointA", "flat");
   // xyz: unit axis direction, w: axis length.
@@ -183,5 +183,23 @@ export function defineRaycastConeShader(builder: ShaderBuilder) {
   builder.addVarying("highp vec4", "vConeEndRadii", "flat");
   builder.addVertexCode(glsl_emitRaycastCone);
   builder.addFragmentCode(glsl_coneEndClipped);
-  builder.addFragmentCode(glsl_intersectRaycastCone);
+  builder.addFragmentCode(
+    slice
+      ? `
+highp float raycastConeAxialFraction = 0.0;
+
+bool raycastSliceContainsPoint(highp vec3 point) {
+  highp float axisLength = vConeAxis.w;
+  if (!(axisLength > 0.0)) return false;
+  VectorSplit offset = splitAlongDir(point - vConeEndpointA, vConeAxis.xyz);
+  highp float axial = offset.parallelDist;
+  if (!(axial >= 0.0 && axial <= axisLength)) return false;
+  raycastConeAxialFraction = axial / axisLength;
+  highp float radius = mix(vConeEndRadii.x, vConeEndRadii.y, raycastConeAxialFraction);
+  highp float radialSq = dot(offset.perp, offset.perp);
+  return radialSq <= radius * radius && !coneEndClipped(axial, sqrt(radialSq));
+}
+`
+      : glsl_intersectRaycastCone,
+  );
 }

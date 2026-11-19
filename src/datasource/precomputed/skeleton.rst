@@ -23,6 +23,16 @@ The :file:`info` file is a JSON-format text file with the following schema:
 
 .. json:schema:: PrecomputedSkeleton
 
+The special vertex attribute ``radius`` is a scalar ``float32`` radius in
+stored-model units. Its values must be finite and nonnegative. The skeleton
+transform applies to both the vertex positions and the radius geometry.
+
+On the segmentation layer's **Render** tab, set **Thickness** to
+**From radius attribute** independently for 2D and 3D.
+The 2D view shows the slice's intersection with the tapered edges and spherical
+nodes; the 3D view shows their surfaces. **Fixed pixels** preserves the line
+width and skeleton mode settings.
+
 .. _precomputed-skeleton-format-encoding:
 
 Encoded skeleton file format

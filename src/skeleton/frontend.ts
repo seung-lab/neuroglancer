@@ -59,8 +59,9 @@ import {
 } from "#src/trackable_value.js";
 import { DataType } from "#src/util/data_type.js";
 import { RefCounted } from "#src/util/disposable.js";
-import { mat4, vec3 } from "#src/util/geom.js";
+import { mat3, mat4, vec3 } from "#src/util/geom.js";
 import { verifyFinitePositiveFloat } from "#src/util/json.js";
+import { MessageSeverity } from "#src/util/message_list.js";
 import { NullarySignal } from "#src/util/signal.js";
 import type { Trackable } from "#src/util/trackable.js";
 import { CompoundTrackable } from "#src/util/trackable.js";
@@ -122,6 +123,9 @@ import {
 import { defineVertexId, VertexIdHelper } from "#src/webgl/vertex_id.js";
 
 const tempModelClip = mat4.create();
+const tempCanonicalToModel = mat4.create();
+const tempModelToRaycast = mat4.create();
+const tempNormalMatrix = mat3.create();
 const tempCanonicalVoxelClip = mat4.create();
 const tempModelToCanonicalVoxel = mat4.create();
 const tempCameraOffset = vec3.create();
@@ -139,6 +143,13 @@ void emitRGBA(vec4 color) {
   color.a *= uAlpha;
   emit(premultiplyAlpha(vec4(color.rgb * raycastLightingFactor, color.a)),
        raycastSurfaceDepth, uPickID);
+}
+`;
+
+const glsl_sliceSkeletonEmit = `
+void emitRGBA(vec4 color) {
+  color.a *= uAlpha;
+  emit(color, uPickID);
 }
 `;
 
@@ -181,6 +192,18 @@ interface SkeletonShaderParameters {
   segmentColorProperties: readonly SegmentPropertyShaderDefinition[];
   segmentColorShaderBuilderState: ShaderControlsBuilderState;
   skeletonShaderBuilderState: ShaderControlsBuilderState;
+}
+
+interface SkeletonGeometryParameters {
+  raycast: boolean;
+  slice: boolean;
+  radiusIndex: number;
+}
+
+export function isSkeletonRadiusAttribute(
+  info: VertexAttributeInfo | undefined,
+) {
+  return info?.dataType === DataType.FLOAT32 && info.numComponents === 1;
 }
 
 // Decides how a vertex attribute reaches the fragment shader.
@@ -296,10 +319,19 @@ vec4 premultiplyAlpha(vec4 color) {
     };
 
     this.vertexIdHelper = this.registerDisposer(VertexIdHelper.get(this.gl));
-    const raycastEnabled = this.registerDisposer(
+    const storedRadiusIndex = this.vertexAttributes.findIndex(
+      (info) => info.name === "radius" && isSkeletonRadiusAttribute(info),
+    );
+    const geometry = this.registerDisposer(
       makeCachedDerivedWatchableValue(
-        (mode: SkeletonRenderMode) => !targetIsSliceView && isRaycastMode(mode),
-        [renderOptions.mode],
+        (mode, useRadius): SkeletonGeometryParameters => ({
+          raycast:
+            (useRadius && storedRadiusIndex >= 0) ||
+            (!targetIsSliceView && isRaycastMode(mode)),
+          slice: targetIsSliceView && useRadius && storedRadiusIndex >= 0,
+          radiusIndex: useRadius ? storedRadiusIndex : -1,
+        }),
+        [renderOptions.mode, renderOptions.useRadiusAttribute],
       ),
     );
 
@@ -307,7 +339,7 @@ vec4 premultiplyAlpha(vec4 color) {
       parameters,
       encodeParameters: (p: SkeletonShaderParameters) =>
         `${p.skeletonShaderBuilderState.key}/${p.segmentColorShaderBuilderState.key}/${JSON.stringify(p.segmentColorParameters)}/${JSON.stringify(p.segmentColorProperties.map(encodeSegmentPropertyShaderDefinition))}`,
-      extraParameters: raycastEnabled,
+      extraParameters: geometry,
     };
     this.edgeShaderGetter = parameterizedEmitterDependentShaderGetter(
       this,
@@ -342,7 +374,7 @@ vec4 premultiplyAlpha(vec4 color) {
   private defineEdgeShader(
     builder: ShaderBuilder,
     parameters: SkeletonShaderParameters,
-    useRaycast: boolean,
+    { raycast: useRaycast, slice, radiusIndex }: SkeletonGeometryParameters,
   ) {
     this.defineCommonShader(builder, parameters);
     builder.addAttribute("highp uvec2", "aVertexIndex");
@@ -352,19 +384,35 @@ highp vec3 vertexA = readAttribute0(aVertexIndex.x);
 highp vec3 vertexB = readAttribute0(aVertexIndex.y);
 `;
     if (useRaycast) {
-      defineRaycastConeShader(builder);
+      defineRaycastConeShader(builder, slice);
       builder.addUniform("highp float", "uEdgePixelRadius");
-      builder.addUniform("highp mat4", "uModelToCanonicalVoxel");
+      builder.addUniform("highp mat4", "uModelToRaycast");
       vertexMain += `
-highp vec3 canonicalVertexA = (uModelToCanonicalVoxel * vec4(vertexA, 1.0)).xyz;
-highp vec3 canonicalVertexB = (uModelToCanonicalVoxel * vec4(vertexB, 1.0)).xyz;
-highp vec2 edgeRadii = getRaycastSegmentRadiiForPixels(
-    canonicalVertexA, canonicalVertexB, uEdgePixelRadius);
-emitRaycastCone(canonicalVertexA, canonicalVertexB, edgeRadii.x, edgeRadii.y,
-                    getRaycastRadiusForPixels(canonicalVertexA, uNodeClipPixelRadius),
-                    getRaycastRadiusForPixels(canonicalVertexB, uNodeClipPixelRadius));
+highp vec3 raycastVertexA = (uModelToRaycast * vec4(vertexA, 1.0)).xyz;
+highp vec3 raycastVertexB = (uModelToRaycast * vec4(vertexB, 1.0)).xyz;
+${
+  radiusIndex >= 0
+    ? `
+highp vec2 edgeRadii = vec2(readAttribute${radiusIndex}(aVertexIndex.x),
+                          readAttribute${radiusIndex}(aVertexIndex.y));
+if (any(isnan(edgeRadii)) || any(isinf(edgeRadii)) || any(lessThan(edgeRadii, vec2(0.0)))) {
+  gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+  return;
+}
+emitRaycastCone(raycastVertexA, raycastVertexB, edgeRadii.x, edgeRadii.y,
+                edgeRadii.x, edgeRadii.y);
+`
+    : `highp vec2 edgeRadii = getRaycastSegmentRadiiForPixels(
+    raycastVertexA, raycastVertexB, uEdgePixelRadius);
+emitRaycastCone(raycastVertexA, raycastVertexB, edgeRadii.x, edgeRadii.y,
+                    getRaycastRadiusForPixels(raycastVertexA, uNodeClipPixelRadius),
+                    getRaycastRadiusForPixels(raycastVertexB, uNodeClipPixelRadius));
+`
+}
 `;
-      builder.addFragmentCode(glsl_raycastSkeletonEmit);
+      builder.addFragmentCode(
+        slice ? glsl_sliceSkeletonEmit : glsl_raycastSkeletonEmit,
+      );
     } else {
       defineLineShader(builder, { endpointClipping: true });
       builder.addUniform("highp float", "uLineWidth");
@@ -388,13 +436,15 @@ void emitRGBA(vec4 color) {
       useRaycast
         ? SkeletonShaderGeometry.RAYCAST_CONE
         : SkeletonShaderGeometry.LINE_QUAD,
+      slice,
+      radiusIndex >= 0,
     );
   }
 
   private defineNodeShader(
     builder: ShaderBuilder,
     parameters: SkeletonShaderParameters,
-    useRaycast: boolean,
+    { raycast: useRaycast, slice, radiusIndex }: SkeletonGeometryParameters,
   ) {
     this.defineCommonShader(builder, parameters);
     let vertexMain = `
@@ -402,16 +452,21 @@ highp uint vertexIndex = uint(gl_InstanceID);
 highp vec3 vertexPosition = readAttribute0(vertexIndex);
 `;
     if (useRaycast) {
-      defineRaycastSphereShader(builder);
+      defineRaycastSphereShader(builder, slice);
       builder.addUniform("highp float", "uNodePixelRadius");
-      builder.addUniform("highp mat4", "uModelToCanonicalVoxel");
+      builder.addUniform("highp mat4", "uModelToRaycast");
       vertexMain += `
-highp vec3 canonicalPosition = (uModelToCanonicalVoxel * vec4(vertexPosition, 1.0)).xyz;
-emitRaycastSphere(
-    canonicalPosition,
-    getRaycastRadiusForPixels(canonicalPosition, uNodePixelRadius));
+highp vec3 raycastPosition = (uModelToRaycast * vec4(vertexPosition, 1.0)).xyz;
+highp float radius = ${
+        radiusIndex >= 0
+          ? `readAttribute${radiusIndex}(vertexIndex)`
+          : "getRaycastRadiusForPixels(raycastPosition, uNodePixelRadius)"
+      };
+emitRaycastSphere(raycastPosition, isinf(radius) ? 0.0 : radius);
 `;
-      builder.addFragmentCode(glsl_raycastSkeletonEmit);
+      builder.addFragmentCode(
+        slice ? glsl_sliceSkeletonEmit : glsl_raycastSkeletonEmit,
+      );
     } else {
       defineCircleShader(builder, /*crossSectionFade=*/ this.targetIsSliceView);
       builder.addUniform("highp float", "uNodeDiameter");
@@ -432,6 +487,8 @@ void emitRGBA(vec4 color) {
       useRaycast
         ? SkeletonShaderGeometry.RAYCAST_SPHERE
         : SkeletonShaderGeometry.CIRCLE_QUAD,
+      slice,
+      radiusIndex >= 0,
     );
   }
 
@@ -440,6 +497,8 @@ void emitRGBA(vec4 color) {
     shaderBuilderState: ShaderControlsBuilderState,
     vertexMain: string,
     geometry: SkeletonShaderGeometry,
+    slice: boolean,
+    storedRadius: boolean,
   ) {
     if (shaderBuilderState.parseResult.errors.length !== 0) {
       throw new Error("Invalid UI control specification");
@@ -493,8 +552,17 @@ void emitDefault() {
     builder.addFragmentCode(
       wrapUserShaderMain(shaderBuilderState.parseResult.code),
     );
+    if (storedRadius && !slice) {
+      builder.addUniform("highp mat3", "uRaycastNormalMatrix");
+    }
     builder.setFragmentMain(
-      (useRaycast ? glsl_raycastFragmentSetup : "") + "userMain();",
+      (slice
+        ? "if (!raycastSliceContainsPoint(getRaycastSlicePoint())) discard;\n"
+        : useRaycast
+          ? (storedRadius
+              ? "raycastNormalMatrix = uRaycastNormalMatrix;\n"
+              : "") + glsl_raycastFragmentSetup
+          : "") + "userMain();",
     );
   }
 
@@ -539,9 +607,16 @@ void emitDefault() {
     raycastEnabled: boolean,
     renderContext: SliceViewPanelRenderContext | PerspectiveViewRenderContext,
     modelMatrix: mat4,
+    storedRadius = false,
   ) {
     if (raycastEnabled) {
-      this.setRaycastUniforms(gl, shader, renderContext, modelMatrix);
+      this.setRaycastUniforms(
+        gl,
+        shader,
+        renderContext,
+        modelMatrix,
+        storedRadius,
+      );
     } else {
       gl.uniformMatrix4fv(
         shader.uniform("uProjection"),
@@ -560,13 +635,12 @@ void emitDefault() {
     this.vertexIdHelper.enable();
   }
 
-  // Canonical voxels have no anisotropic scale, so a node never draws as an
-  // ellipsoid.
   private setRaycastUniforms(
     gl: GL,
     shader: ShaderProgram,
     renderContext: SliceViewPanelRenderContext | PerspectiveViewRenderContext,
     modelMatrix: mat4,
+    storedRadius: boolean,
   ) {
     const { projectionParameters } = renderContext;
     const { canonicalVoxelFactors } =
@@ -602,16 +676,56 @@ void emitDefault() {
     // Undoes the camera offset, so model coordinates reach the same clip
     // coordinates.
     mat4.translate(canonicalVoxelClip, canonicalVoxelClip, cameraOffset);
+    let modelToRaycast = modelToCanonicalVoxel;
+    let raycastToClip = canonicalVoxelClip;
+    if (storedRadius) {
+      // Intersect in stored-model space so non-uniform transforms also affect
+      // the radius, not just the centerline.
+      mat4.invert(tempCanonicalToModel, modelToCanonicalVoxel);
+      modelToRaycast = mat4.fromTranslation(
+        tempModelToRaycast,
+        vec3.set(
+          tempCameraOffset,
+          -tempCanonicalToModel[12],
+          -tempCanonicalToModel[13],
+          -tempCanonicalToModel[14],
+        ),
+      );
+      mat4.translate(
+        modelToCanonicalVoxel,
+        modelToCanonicalVoxel,
+        vec3.set(
+          tempCameraOffset,
+          tempCanonicalToModel[12],
+          tempCanonicalToModel[13],
+          tempCanonicalToModel[14],
+        ),
+      );
+      raycastToClip = mat4.multiply(
+        tempModelClip,
+        canonicalVoxelClip,
+        modelToCanonicalVoxel,
+      );
+      if (!this.targetIsSliceView) {
+        mat3.normalFromMat4(tempNormalMatrix, modelToCanonicalVoxel);
+        gl.uniformMatrix3fv(
+          shader.uniform("uRaycastNormalMatrix"),
+          false,
+          tempNormalMatrix,
+        );
+      }
+    }
     gl.uniformMatrix4fv(
-      shader.uniform("uModelToCanonicalVoxel"),
+      shader.uniform("uModelToRaycast"),
       false,
-      modelToCanonicalVoxel,
+      modelToRaycast,
     );
     initializeRaycastPrimitiveShader(
       shader,
-      canonicalVoxelClip,
+      raycastToClip,
       projectionParameters,
     );
+    if (this.targetIsSliceView) return;
     const { lightDirection, ambientLighting, directionalLighting } =
       renderContext as PerspectiveViewRenderContext;
     gl.uniform4f(
@@ -743,7 +857,10 @@ void emitDefault() {
 
   endLayer(
     gl: GL,
-    ...shaderResults: ParameterizedShaderGetterResult<SkeletonShaderParameters>[]
+    ...shaderResults: ParameterizedShaderGetterResult<
+      SkeletonShaderParameters,
+      SkeletonGeometryParameters
+    >[]
   ) {
     const { vertexAttributes } = this;
     const { segmentationColorUserShader } = this.base.displayState;
@@ -796,6 +913,7 @@ export interface ViewSpecificSkeletonRenderingOptions<
 > {
   mode: TrackableEnum<Mode>;
   lineWidth: TrackableSkeletonLineWidth;
+  useRadiusAttribute: TrackableBoolean;
 }
 
 export class SkeletonRenderingOptions implements Trackable {
@@ -816,10 +934,12 @@ export class SkeletonRenderingOptions implements Trackable {
       SkeletonRenderMode2d.LINES_AND_POINTS,
     ),
     lineWidth: new TrackableSkeletonLineWidth(2),
+    useRadiusAttribute: new TrackableBoolean(false),
   };
   params3d: ViewSpecificSkeletonRenderingOptions<SkeletonRenderMode3d> = {
     mode: new TrackableSkeletonRenderMode3d(SkeletonRenderMode3d.LINES),
     lineWidth: new TrackableSkeletonLineWidth(1),
+    useRadiusAttribute: new TrackableBoolean(false),
   };
 
   constructor(layer: RefCounted) {
@@ -836,6 +956,8 @@ export class SkeletonRenderingOptions implements Trackable {
     compound.add("lineWidth2d", this.params2d.lineWidth);
     compound.add("mode3d", this.params3d.mode);
     compound.add("lineWidth3d", this.params3d.lineWidth);
+    compound.add("useRadiusAttribute2d", this.params2d.useRadiusAttribute);
+    compound.add("useRadiusAttribute3d", this.params3d.useRadiusAttribute);
   }
 
   reset() {
@@ -884,6 +1006,12 @@ export class SkeletonLayer extends RefCounted {
       renderingOptions.nodeShaderError.value = undefined;
     };
     resetShaderErrors();
+    for (const setting of [
+      renderingOptions.params2d.useRadiusAttribute,
+      renderingOptions.params3d.useRadiusAttribute,
+    ]) {
+      this.registerDisposer(setting.changed.add(this.redrawNeeded.dispatch));
+    }
     this.registerDisposer(
       renderingOptions.shader.changed.add(() => {
         resetShaderErrors();
@@ -954,13 +1082,29 @@ export class SkeletonLayer extends RefCounted {
     const nodeShaderResult = renderHelper.nodeShaderGetter(
       renderContext.emitter,
     );
-    const { shader: edgeShader, extraParameters: edgeRaycastEnabled } =
+    const { shader: edgeShader, extraParameters: edgeGeometry } =
       edgeShaderResult;
-    const { shader: nodeShader, extraParameters: nodeRaycastEnabled } =
+    const { shader: nodeShader, extraParameters: nodeGeometry } =
       nodeShaderResult;
     if (edgeShader === null && nodeShader === null) return;
 
     const { projectionParameters } = renderContext;
+    const edgeRaycastEnabled = edgeGeometry.raycast;
+    const nodeRaycastEnabled = nodeGeometry.raycast;
+    const storedRadius = edgeGeometry.radiusIndex >= 0;
+    if (storedRadius && !mat4.determinant(modelMatrix)) {
+      const message =
+        "Skeleton radius rendering requires an invertible model transform.";
+      if (
+        ![...attachment.messages].some((entry) => entry.message === message)
+      ) {
+        attachment.messages.addMessage({
+          severity: MessageSeverity.error,
+          message,
+        });
+      }
+      return;
+    }
 
     const visibleSkeletons = this.collectVisibleSkeletons(layer, renderContext);
 
@@ -972,16 +1116,18 @@ export class SkeletonLayer extends RefCounted {
         edgeRaycastEnabled,
         renderContext,
         modelMatrix,
+        storedRadius,
       );
       this.enableShaderControls(edgeShader, edgeShaderResult, attachment);
-      renderHelper.setEdgeSizeUniforms(
-        gl,
-        edgeShader,
-        edgeRaycastEnabled,
-        projectionParameters,
-        lineWidth,
-        nodeDiameter,
-      );
+      if (!storedRadius)
+        renderHelper.setEdgeSizeUniforms(
+          gl,
+          edgeShader,
+          edgeRaycastEnabled,
+          projectionParameters,
+          lineWidth,
+          nodeDiameter,
+        );
       renderHelper.beginEdges(gl, edgeShader);
       this.drawPass(
         renderContext,
@@ -1002,14 +1148,16 @@ export class SkeletonLayer extends RefCounted {
         nodeRaycastEnabled,
         renderContext,
         modelMatrix,
+        storedRadius,
       );
-      renderHelper.setNodeSizeUniforms(
-        gl,
-        nodeShader,
-        nodeRaycastEnabled,
-        projectionParameters,
-        nodeDiameter,
-      );
+      if (!storedRadius)
+        renderHelper.setNodeSizeUniforms(
+          gl,
+          nodeShader,
+          nodeRaycastEnabled,
+          projectionParameters,
+          nodeDiameter,
+        );
       this.enableShaderControls(nodeShader, nodeShaderResult, attachment);
       this.drawPass(
         renderContext,
@@ -1026,7 +1174,10 @@ export class SkeletonLayer extends RefCounted {
 
   private enableShaderControls(
     shader: ShaderProgram,
-    shaderResult: ParameterizedShaderGetterResult<SkeletonShaderParameters>,
+    shaderResult: ParameterizedShaderGetterResult<
+      SkeletonShaderParameters,
+      SkeletonGeometryParameters
+    >,
     attachment: VisibleLayerInfo<
       LayerView,
       ThreeDimensionalRenderLayerAttachmentState
