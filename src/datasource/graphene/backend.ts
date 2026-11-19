@@ -135,7 +135,7 @@ export class GrapheneMeshSource extends WithParameters(
   );
   dynamicKvStore = this.sharedKvStoreContext.kvStoreContext.getKvStore(
     this.parameters.sharding
-      ? `${this.parameters.fragmentUrl}dynamic/`
+      ? `${this.parameters.fragmentUrl}${this.parameters.dynamicMeshDir}/`
       : this.parameters.fragmentUrl,
   );
   // The buckets v2 manifests named, in the order first seen; never evicted, a

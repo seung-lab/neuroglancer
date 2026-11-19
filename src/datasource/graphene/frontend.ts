@@ -302,6 +302,7 @@ interface GrapheneMultiscaleVolumeInfo extends MultiscaleVolumeInfo {
   graph: GraphInfo;
   // Directory holding the mesh info, undefined when the server publishes no mesh location.
   meshUrl: string | undefined;
+  dynamicMeshDir: string;
 }
 
 /** The mesh directory: parent of the published `initial/` path, which the info sits beside. */
@@ -328,6 +329,12 @@ function parseGrapheneMultiscaleVolumeInfo(
     graph,
     dataUrl,
     meshUrl: parseMeshUrl(obj),
+    dynamicMeshDir: verifyOptionalObjectProperty(
+      obj,
+      "dynamic_mesh_dir",
+      verifyString,
+      "dynamic",
+    ),
   };
 }
 
@@ -556,6 +563,7 @@ async function getMeshSource(
   url: string,
   fragmentUrl: string,
   nBitsForLayerId: number,
+  dynamicMeshDir: string,
   options: ProgressOptions,
 ) {
   const { metadata, segmentPropertyMap } = await getMeshMetadata(
@@ -569,6 +577,7 @@ async function getMeshSource(
     lod: 0,
     sharding: metadata?.sharding,
     nBitsForLayerId,
+    dynamicMeshDir,
   };
   const transform = metadata?.transform || mat4.create();
   return {
@@ -685,6 +694,7 @@ async function getVolumeDataSource(
           ),
       ),
       info.graph.nBitsForLayerId,
+      info.dynamicMeshDir,
       options,
     );
     const subsourceToModelSubspaceTransform =
