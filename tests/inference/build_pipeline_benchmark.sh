@@ -5,7 +5,7 @@ cd "$(dirname "$0")/../.."
 export MAX_CPU_THREADS="${MAX_CPU_THREADS:-8}"
 export WEBGPU_WORKERS="${WEBGPU_WORKERS:-1}"
 export PATCH_CACHE_MIB="${PATCH_CACHE_MIB:-128}"
-export RUNTIME_BASE="${RUNTIME_BASE:-https://storage.googleapis.com/flywire-frontend/bundle-onnx/ort-conv3d-5420599da745/}"
+export RUNTIME_BASE="${RUNTIME_BASE:-https://storage.googleapis.com/flywire-frontend/bundle-onnx/ort-conv3d-82e7a1d722d0/}"
 export BUILD_INFO="$(node --input-type=module <<'JS'
 import {execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';

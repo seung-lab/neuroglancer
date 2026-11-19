@@ -6,7 +6,7 @@ if [[ -n "$(git status --porcelain)" ]]; then
   echo "ng-onnx builds require a clean working tree; commit changes first." >&2
   exit 1
 fi
-export RUNTIME_BASE=https://storage.googleapis.com/flywire-frontend/bundle-onnx/ort-conv3d-5420599da745/
+export RUNTIME_BASE=https://storage.googleapis.com/flywire-frontend/bundle-onnx/ort-conv3d-82e7a1d722d0/
 BUILD_INFO="$(node --input-type=module <<'JS'
 import {execFileSync} from 'node:child_process';
 const git = (...args) => execFileSync('git', args, {encoding:'utf8'}).trim();
