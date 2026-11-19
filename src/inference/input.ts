@@ -8,6 +8,7 @@ import { makeIdentityTransform } from "#src/coordinate_transform.js";
 import type { ImageUserLayer } from "#src/layer/image/index.js";
 import type { RenderLayerTransform } from "#src/render_coordinate_transform.js";
 import { getRenderLayerTransform } from "#src/render_coordinate_transform.js";
+import type { SliceViewSingleResolutionSource } from "#src/sliceview/frontend.js";
 import { UncompressedVolumeChunk } from "#src/sliceview/uncompressed_chunk_format.js";
 import type {
   VolumeChunk,
@@ -19,17 +20,19 @@ import type { DataType } from "#src/util/data_type.js";
 import { DATA_TYPE_ARRAY_CONSTRUCTOR } from "#src/util/data_type.js";
 import { valueOrThrow } from "#src/util/error.js";
 import { defaultDataTypeRange } from "#src/util/lerp.js";
-import * as matrix from "#src/util/matrix.js";
 
 type Triple<T> = readonly [T, T, T];
 
 export interface InferenceInputSnapshot {
   /** Dimensions of chunk space corresponding to Z, Y, X. */
   readonly chunkDimensionsZYX: Triple<number>;
-  readonly lowerBoundChunk: Triple<number>;
-  readonly upperBoundChunk: Triple<number>;
+  /** Full-rank storage bounds (including the channel extent for rank 4). */
+  readonly lowerBoundChunk: readonly number[];
+  readonly upperBoundChunk: readonly number[];
+  /** Zero-based index within the selected scale's clipped channel extent. */
+  readonly inputChannel?: number;
   /** Backend request offset, NOT an additional offset to chunk-grid positions. */
-  readonly baseVoxelOffset: Triple<number>;
+  readonly baseVoxelOffset: readonly number[];
   readonly chunkToMultiscaleTransform: readonly number[];
   /** Selected-scale model-grid lower bound of the volume, in ZYX order. */
   readonly modelOriginZYX: Triple<number>;
@@ -39,6 +42,9 @@ export interface PreparedInferenceInput {
   readonly shapeZYX: number[];
   /** Selected-scale model-grid lower bound, for inference inputBounds (ZYX). */
   readonly originZYX: number[];
+  /** Rank 4 only, including an all-zero vector for integer-aligned grids. Add
+   * to integer patch-grid coordinates for physical placement, in selected-scale voxels. */
+  readonly gridOffsetZYX?: readonly number[];
   readonly spacingZYX: number[];
   readonly axisNamesZYX: string[];
   readonly unitsZYX: string[];
@@ -79,10 +85,10 @@ function unsupported(message: string): never {
   throw new Error(`Unsupported inference input: ${message}`);
 }
 
-function checkIdentity(transform: ArrayLike<number>) {
+function checkIdentity(transform: ArrayLike<number>, rank: number) {
   if (
-    transform.length !== 16 ||
-    Array.from(transform).some((x, i) => x !== (i % 5 === 0 ? 1 : 0))
+    transform.length !== (rank + 1) ** 2 ||
+    Array.from(transform).some((x, i) => x !== (i % (rank + 2) === 0 ? 1 : 0))
   ) {
     unsupported(
       "model-to-layer transform must be exactly identity (no resampling)",
@@ -90,28 +96,37 @@ function checkIdentity(transform: ArrayLike<number>) {
   }
 }
 
-/** Storage scale/permutation and aligned selected-grid origins; no resampling. */
+/** Map the native storage lattice to the selected-scale grid without resampling. */
 function getChunkGrid(
-  transform: ArrayLike<number>,
-  modelDimensionsZYX: number[],
+  selected: SliceViewSingleResolutionSource<VolumeChunkSource>,
+  {
+    rank,
+    modelDimensionsZYX,
+    modelChannelDimension,
+  }: ReturnType<typeof getNativeMetadata>,
 ) {
+  const {
+    chunkToMultiscaleTransform: transform,
+    chunkSource: { spec },
+  } = selected;
+  if (spec.rank !== rank) unsupported("chunk and model ranks must match");
+  const stride = rank + 1;
   if (
-    transform.length !== 16 ||
-    transform[3] !== 0 ||
-    transform[7] !== 0 ||
-    transform[11] !== 0 ||
-    transform[15] !== 1
+    transform.length !== stride ** 2 ||
+    transform.some(
+      (x, i) => i % stride === rank && x !== (i === stride ** 2 - 1 ? 1 : 0),
+    )
   ) {
     unsupported(
-      "source grid requires a positive scaled axis permutation and integer origin",
+      "source grid must be a homogeneous affine transform of the expected rank",
     );
   }
   const modelToChunk: number[] = [];
   const modelScales: number[] = [];
-  for (let c = 0; c < 3; ++c) {
+  for (let c = 0; c < rank; ++c) {
     let modelDimension = -1;
-    for (let m = 0; m < 3; ++m) {
-      const value = transform[c * 4 + m];
+    for (let m = 0; m < rank; ++m) {
+      const value = transform[c * stride + m];
       if (value === 0) continue;
       if (
         !(value > 0) ||
@@ -129,16 +144,63 @@ function getChunkGrid(
     }
     if (modelDimension === -1) unsupported("singular source grid transform");
   }
-  const translationZYX = triple(
-    modelDimensionsZYX.map((m) => transform[12 + m] / modelScales[m]),
+  const origin = modelDimensionsZYX.map(
+    (m) => transform[rank * stride + m] / modelScales[m],
   );
-  if (translationZYX.some((x) => !Number.isSafeInteger(x))) {
-    unsupported("source origin must align to integer selected-scale voxels");
+  // OME-Zarr may translate voxel centers by a fractional selected-scale voxel.
+  // This does not resample the array: patch reads use the integer lattice and
+  // output placement adds back the signed remainder in selected-scale units.
+  const translationZYX = triple(origin.map((x) => Math.trunc(x) || 0));
+  if (
+    origin.some(
+      (x, a) =>
+        !Number.isFinite(x) ||
+        !Number.isSafeInteger(translationZYX[a]) ||
+        (rank === 3 && !Number.isInteger(x)),
+    )
+  ) {
+    unsupported(
+      "source origin must align to integer selected-scale voxels for rank 3 and be finite and safely indexable for rank 4",
+    );
   }
+  const gridOffsetZYX =
+    rank === 4
+      ? triple(origin.map((x, a) => x - translationZYX[a] || 0))
+      : undefined;
+  const lower = Array.from({ length: rank }, (_, d) =>
+    Math.max(
+      spec.lowerVoxelBound[d],
+      selected.lowerClipBound?.[d] ?? -Infinity,
+    ),
+  );
+  const upper = Array.from({ length: rank }, (_, d) =>
+    Math.min(spec.upperVoxelBound[d], selected.upperClipBound?.[d] ?? Infinity),
+  );
+  const channelDim =
+    modelChannelDimension === -1 ? -1 : modelToChunk[modelChannelDimension];
+  const channelCount =
+    channelDim === -1 ? 1 : upper[channelDim] - lower[channelDim];
+  if (
+    channelDim !== -1 &&
+    (modelScales[modelChannelDimension] !== 1 ||
+      !Number.isFinite(transform[rank * stride + modelChannelDimension]) ||
+      !Number.isSafeInteger(lower[channelDim]) ||
+      !Number.isSafeInteger(upper[channelDim]) ||
+      !Number.isSafeInteger(channelCount) ||
+      channelCount <= 0)
+  )
+    unsupported(
+      "channel axis must have unit stride and a nonempty integer extent",
+    );
   return {
+    lower,
+    upper,
+    channelDim,
+    channelCount,
     chunkDimensionsZYX: triple(modelDimensionsZYX.map((m) => modelToChunk[m])),
     chunkScalesZYX: triple(modelDimensionsZYX.map((m) => modelScales[m])),
     translationZYX,
+    gridOffsetZYX,
   };
 }
 
@@ -153,8 +215,11 @@ function getActiveVolume(layer: ImageUserLayer) {
   if (volumes.length !== 1)
     unsupported("expected exactly one active image volume");
   const renderLayer = volumes[0];
-  if (renderLayer.multiscaleSource.rank !== 3)
-    unsupported("only rank-3 volumes are supported");
+  const { rank } = renderLayer.multiscaleSource;
+  if (rank !== 3 && rank !== 4)
+    unsupported(
+      "expected a rank-3 volume or rank-4 volume with one channel axis",
+    );
   const matches = layer.dataSources.flatMap(({ loadState }) => {
     if (loadState === undefined || loadState.error !== undefined) return [];
     return loadState.subsources
@@ -168,35 +233,44 @@ function getActiveVolume(layer: ImageUserLayer) {
   });
   if (matches.length !== 1)
     unsupported("expected one active loaded source matching the image volume");
+  if (matches[0].loadState.dataSource.modelTransform.inputSpace.rank !== rank)
+    unsupported("model and volume ranks must match");
   return { renderLayer, ...matches[0] };
 }
 
 function getNativeMetadata(space: CoordinateSpace) {
-  if (space.rank !== 3) unsupported("only rank-3 scalar volumes are supported");
-  const { names, scales, units } = space;
+  const { rank, names, scales, units } = space;
+  const modelChannelDimension = names.findIndex(
+    (name) => /^(c|channel)['^]?$/.test(name) || name.endsWith("^"),
+  );
   if (
-    names.length !== 3 ||
-    new Set(names).size !== 3 ||
+    (rank !== 3 && rank !== 4) ||
+    names.length !== rank ||
+    new Set(names).size !== rank ||
+    (rank === 4 && modelChannelDimension === -1) ||
     !["x", "y", "z"].every((name) => names.includes(name))
   ) {
     unsupported(
-      "axes must be unambiguously named exactly x, y, z in model and layer space",
+      "spatial axes must be unambiguously named exactly x, y, z, with one explicit channel axis for rank 4",
     );
   }
   if (
     !space.valid ||
-    [0, 1, 2].some(
-      (d) =>
+    names.some(
+      (_, d) =>
         !(scales[d] > 0) ||
         !Number.isFinite(scales[d]) ||
         typeof units[d] !== "string" ||
-        space.coordinateArrays[d] !== undefined,
+        (d !== modelChannelDimension &&
+          space.coordinateArrays[d] !== undefined),
     )
   ) {
     unsupported("missing, ambiguous, or non-uniform physical axis metadata");
   }
   const modelDimensionsZYX = ["z", "y", "x"].map((name) => names.indexOf(name));
   return {
+    rank,
+    modelChannelDimension,
     modelDimensionsZYX,
     spacingZYX: triple(modelDimensionsZYX.map((d) => scales[d])),
     unitsZYX: triple(modelDimensionsZYX.map((d) => units[d])),
@@ -220,12 +294,20 @@ export function getInferenceInputMetadata(
 
 function getInputSources(
   multiscale: SliceViewVolumeRenderLayer["multiscaleSource"],
+  modelChannelDimension: number,
 ) {
+  // Project only the spatial model axes; a single channel is a fixed
+  // coordinate, not a request to pack all channels into every chunk.
+  const multiscaleToViewTransform = new Float32Array(multiscale.rank * 3);
+  for (let d = 0, view = 0; d < multiscale.rank; ++d) {
+    if (d !== modelChannelDimension)
+      multiscaleToViewTransform[d * 3 + view++] = 1;
+  }
   return multiscale.getSources({
     discreteValues: true,
     displayRank: 3,
     modelChannelDimensionIndices: [],
-    multiscaleToViewTransform: matrix.createIdentity(Float32Array, 3),
+    multiscaleToViewTransform,
   });
 }
 
@@ -243,6 +325,7 @@ function getScaledSpacing(
 /** Available source scales in one orientation, independent of user transforms. */
 export function getInferenceInputScales(layer: ImageUserLayer): {
   scaleIndex: number;
+  channelCount?: number;
   spacingZYX: number[];
   axisNamesZYX: string[];
   unitsZYX: string[];
@@ -251,20 +334,22 @@ export function getInferenceInputScales(layer: ImageUserLayer): {
   const metadata = getNativeMetadata(
     loadState.dataSource.modelTransform.inputSpace,
   );
-  const sources = getInputSources(renderLayer.multiscaleSource);
+  const sources = getInputSources(
+    renderLayer.multiscaleSource,
+    metadata.modelChannelDimension,
+  );
   try {
     if (sources.length !== 1 || sources[0].length === 0) {
       unsupported("expected one unambiguous native chunk orientation");
     }
     return sources[0].map((selected, scaleIndex) => {
-      if (selected.chunkSource.spec.rank !== 3)
-        unsupported("only rank-3 chunks are supported");
-      const { chunkScalesZYX } = getChunkGrid(
-        selected.chunkToMultiscaleTransform,
-        metadata.modelDimensionsZYX,
+      const { chunkScalesZYX, channelDim, channelCount } = getChunkGrid(
+        selected,
+        metadata,
       );
       return {
         scaleIndex,
+        ...(channelDim === -1 ? {} : { channelCount }),
         spacingZYX: getScaledSpacing(metadata.spacingZYX, chunkScalesZYX),
         axisNamesZYX: ["z", "y", "x"],
         unitsZYX: Array.from(metadata.unitsZYX),
@@ -284,27 +369,41 @@ function getMetadata(
 ) {
   const nativeSpace = loadState.dataSource.modelTransform.inputSpace;
   const metadata = getNativeMetadata(nativeSpace);
-  if (transform.rank !== 3 || transform.unpaddedRank !== 3) {
-    unsupported("only rank-3 scalar volumes are supported");
+  const { rank, modelChannelDimension } = metadata;
+  if (transform.rank !== rank || transform.unpaddedRank !== rank) {
+    unsupported("render and model ranks must match without padding");
   }
-  if (transform.channelToRenderLayerDimensions.some((d) => d !== -1)) {
-    unsupported("channel dimensions are not supported");
+  if (
+    transform.channelToRenderLayerDimensions.some(
+      (d) => d !== -1 && d !== modelChannelDimension,
+    )
+  ) {
+    unsupported("spatial axes cannot be channel dimensions");
   }
   // Validate the raw user and internal subsource transforms as well: their
   // composition could otherwise hide a transform cancelled by another one.
   const raw = loadState.transform.value;
-  if (raw.rank !== 3 || raw.sourceRank !== 3)
-    unsupported("only rank-3 scalar volumes are supported");
-  checkIdentity(raw.transform);
-  checkIdentity(subsource.subsourceToModelSubspaceTransform);
-  if (!arraysEqual(subsource.modelSubspaceDimensionIndices, [0, 1, 2]))
+  if (raw.rank !== rank || raw.sourceRank !== rank)
+    unsupported("source and model ranks must match");
+  checkIdentity(raw.transform, rank);
+  checkIdentity(subsource.subsourceToModelSubspaceTransform, rank);
+  if (
+    subsource.modelSubspaceDimensionIndices.length !== rank ||
+    subsource.modelSubspaceDimensionIndices.some((d, i) => d !== i)
+  )
     unsupported("subsource must use the native model dimensions in order");
   // The input grid remains native, but CoordinateSpaceCombiner binds output
   // scales to the viewer's coordinate space (converting translation only).
   for (const space of [raw.inputSpace, raw.outputSpace]) {
-    getNativeMetadata(space);
+    const spaceMetadata = getNativeMetadata(space);
     if (
-      !arraysEqual(space.names, nativeSpace.names) ||
+      space.rank !== rank ||
+      !arraysEqual(
+        spaceMetadata.modelDimensionsZYX,
+        metadata.modelDimensionsZYX,
+      ) ||
+      (space === raw.inputSpace &&
+        !arraysEqual(space.names, nativeSpace.names)) ||
       (space === raw.inputSpace &&
         !arraysEqual(space.scales, nativeSpace.scales)) ||
       !arraysEqual(space.units, nativeSpace.units)
@@ -323,19 +422,23 @@ function getMetadata(
       layer.managedLayer.manager.root.coordinateSpace.value,
       transform.globalToRenderLayerDimensions,
     ],
+    [
+      layer.channelCoordinateSpace.value,
+      transform.channelToRenderLayerDimensions,
+    ],
   ] as const) {
     dimensions.forEach((d, i) => {
       if (d === -1) return;
       if (
         !space.valid ||
         d < 0 ||
-        d >= 3 ||
+        d >= rank ||
         covered.has(d) ||
-        space.names[i] !== nativeSpace.names[d] ||
+        space.names[i] !== raw.outputSpace.names[d] ||
         !(space.scales[i] > 0) ||
         !Number.isFinite(space.scales[i]) ||
         space.units[i] !== nativeSpace.units[d] ||
-        space.coordinateArrays[i] !== undefined
+        (d !== modelChannelDimension && space.coordinateArrays[i] !== undefined)
       )
         unsupported(
           "missing, ambiguous, or non-uniform physical axis metadata",
@@ -347,8 +450,8 @@ function getMetadata(
       covered.add(d);
     });
   }
-  if (covered.size !== 3)
-    unsupported("physical spacing/units must be explicit for all three axes");
+  if (covered.size !== rank)
+    unsupported("physical spacing/units must be explicit for all source axes");
   // A raw identity is generally NOT a render-space identity: the viewer may
   // use a different physical voxel scale. Recompute exactly the same float32
   // normalization, without any user or subsource transform and without epsilon.
@@ -356,7 +459,9 @@ function getMetadata(
     getRenderLayerTransform(
       layer.managedLayer.manager.root.coordinateSpace.value,
       layer.managedLayer.localCoordinateSpace.value,
-      makeIdentityTransform(nativeSpace),
+      // Relabeling c <-> c' <-> c^ changes how the viewer navigates the
+      // channel axis but not its position on the native grid.
+      { ...makeIdentityTransform(nativeSpace), outputSpace: raw.outputSpace },
       undefined,
       layer.channelCoordinateSpace.value,
     ),
@@ -421,6 +526,7 @@ export interface ChunkToZYXPatchOptions {
   readonly dataType: DataType;
   readonly chunkOrigin: readonly number[];
   readonly chunkDimensionsZYX: readonly number[];
+  /** Full-rank lower corner; the non-spatial dimension is one fixed voxel. */
   readonly patchLowerChunk: readonly number[];
   readonly patchShapeZYX: readonly number[];
   readonly lowerBoundChunk: readonly number[];
@@ -457,17 +563,30 @@ export function copyChunkToZYXPatch(
   const [dz, dy, dx] = dims;
   const size = chunk.chunkDataSize;
   const expectedConstructor = DATA_TYPE_ARRAY_CONSTRUCTOR[options.dataType];
-  const rawData =
+  const channelDim =
+    size.length === 4 ? size.findIndex((_, d) => !dims.includes(d)) : -1;
+  const channelRel =
+    channelDim === -1 ? 0 : patchLower[channelDim] - chunkOrigin[channelDim];
+  const data =
     chunk.getValueAt === UncompressedVolumeChunk.prototype.getValueAt
       ? (chunk as UncompressedVolumeChunk).data
       : null;
   if (
-    size.length === 3 &&
     expectedConstructor !== undefined &&
-    rawData instanceof expectedConstructor &&
-    rawData.length === size[0] * size[1] * size[2]
+    data instanceof expectedConstructor &&
+    data.length === size.reduce((n, x) => n * x, 1)
   ) {
-    const chunkStrides = [1, size[0], size[0] * size[1]];
+    // Strides use the actual edge chunk, including interleaved channels.
+    const chunkStrides = [
+      1,
+      size[0],
+      size[0] * size[1],
+      size[0] * size[1] * size[2],
+    ];
+    const rawData =
+      channelRel === 0
+        ? data
+        : data.subarray(channelRel * chunkStrides[channelDim]);
     const strideZ = chunkStrides[dz];
     const strideY = chunkStrides[dy];
     const strideX = chunkStrides[dx];
@@ -557,7 +676,8 @@ export function copyChunkToZYXPatch(
     }
     return;
   }
-  const position = new Uint32Array(3);
+  const position = new Uint32Array(size.length);
+  if (channelDim !== -1) position[channelDim] = channelRel;
   for (let z = lower[0]; z < upper[0]; ++z) {
     position[dz] = z - chunkOrigin[dz];
     for (let y = lower[1]; y < upper[1]; ++y) {
@@ -580,26 +700,51 @@ export function copyChunkToZYXPatch(
   }
 }
 
+// Enumerate only the intersecting chunk grids, first storage dimension fastest.
+// Never materialize a list proportional to the (possibly speculative) box.
+function* chunkGridPositions(
+  lower: number[],
+  upper: number[],
+  size: readonly number[],
+) {
+  const start = lower.map((x, d) => Math.floor(x / size[d]));
+  const end = upper.map((x, d) => Math.ceil(x / size[d]));
+  const grid = start.slice();
+  while (true) {
+    yield Float32Array.from(grid);
+    let d = 0;
+    while (++grid[d] === end[d]) {
+      grid[d] = start[d];
+      if (++d === grid.length) return;
+    }
+  }
+}
+
 /**
  * Select exactly one active image volume and one explicit scale/orientation.
+ * inputChannel is relative to the selected scale's clipped channel lower bound,
+ * independent of the viewer position. A rank-3 input has only channel zero.
  * Reject user/view transforms, ambiguous axes, fractional selected-grid bounds,
  * and grids requiring resampling rather than sampling rendered data.
  */
 export function prepareInferenceInput(
   layer: ImageUserLayer,
   scaleIndex = 0,
+  inputChannel = 0,
 ): PreparedInferenceInput {
   const active = getActiveVolume(layer);
   const { renderLayer, loadState, subsource } = active;
   const multiscale = renderLayer.multiscaleSource;
   const dataSource = loadState.dataSource;
   const transform = valueOrThrow(renderLayer.transform.value);
+  const metadata = getMetadata(layer, transform, active);
   const {
+    rank,
     modelDimensionsZYX,
     spacingZYX: nativeSpacingZYX,
     unitsZYX,
-  } = getMetadata(layer, transform, active);
-  const sources = getInputSources(multiscale);
+  } = metadata;
+  const sources = getInputSources(multiscale, metadata.modelChannelDimension);
   try {
     if (sources.length !== 1 || sources[0].length === 0) {
       unsupported("expected one unambiguous native chunk orientation");
@@ -614,28 +759,29 @@ export function prepareInferenceInput(
     const selected = sources[0][scaleIndex];
     const source: VolumeChunkSource = selected.chunkSource;
     const { spec } = source;
-    if (spec.rank !== 3) unsupported("only rank-3 chunks are supported");
     const { dataType } = spec;
     const divisor = getNormalizationDivisor(dataType);
     const {
       chunkDimensionsZYX: dims,
       chunkScalesZYX,
       translationZYX,
-    } = getChunkGrid(selected.chunkToMultiscaleTransform, modelDimensionsZYX);
+      gridOffsetZYX,
+      lower,
+      upper,
+      channelDim,
+      channelCount,
+    } = getChunkGrid(selected, metadata);
+    if (
+      !Number.isSafeInteger(inputChannel) ||
+      inputChannel < 0 ||
+      inputChannel >= channelCount
+    ) {
+      throw new RangeError(
+        `Inference inputChannel must be an integer from 0 to ${channelCount - 1}`,
+      );
+    }
     const spacingZYX = getScaledSpacing(nativeSpacingZYX, chunkScalesZYX);
-    const lower = [0, 1, 2].map((d) =>
-      Math.max(
-        spec.lowerVoxelBound[d],
-        selected.lowerClipBound?.[d] ?? spec.lowerVoxelBound[d],
-      ),
-    );
-    const upper = [0, 1, 2].map((d) =>
-      Math.min(
-        spec.upperVoxelBound[d],
-        selected.upperClipBound?.[d] ?? spec.upperVoxelBound[d],
-      ),
-    );
-    for (let d = 0; d < 3; ++d) {
+    for (let d = 0; d < rank; ++d) {
       if (
         !Number.isSafeInteger(lower[d]) ||
         !Number.isSafeInteger(upper[d]) ||
@@ -661,9 +807,10 @@ export function prepareInferenceInput(
     const shapeZYX = triple(dims.map((d) => upper[d] - lower[d]));
     const validitySnapshot: InferenceInputSnapshot = Object.freeze({
       chunkDimensionsZYX: dims,
-      lowerBoundChunk: triple(lower),
-      upperBoundChunk: triple(upper),
-      baseVoxelOffset: triple(spec.baseVoxelOffset),
+      lowerBoundChunk: Object.freeze(lower),
+      upperBoundChunk: Object.freeze(upper),
+      ...(channelDim === -1 ? {} : { inputChannel }),
+      baseVoxelOffset: Object.freeze(Array.from(spec.baseVoxelOffset)),
       chunkToMultiscaleTransform: Object.freeze(
         Array.from(selected.chunkToMultiscaleTransform),
       ),
@@ -677,7 +824,12 @@ export function prepareInferenceInput(
     ) {
       unsupported("model-grid bounds exceed safe integer range");
     }
-    const chunkSize = triple(spec.chunkDataSize);
+    const chunkSize = Array.from(spec.chunkDataSize);
+    // Start every patch/prefetch with a one-voxel channel extent; the three
+    // spatial components are filled from the requested box by the caller.
+    const fixedLower = lower.slice();
+    if (channelDim !== -1) fixedLower[channelDim] += inputChannel;
+    const fixedUpper = fixedLower.map((x) => x + 1);
     const fillValue = spec.fillValue;
     const lifetime = new AbortController();
     let disposed = false;
@@ -689,6 +841,7 @@ export function prepareInferenceInput(
     const coordinateMetadataChecks = [
       layer.managedLayer.localCoordinateSpace,
       layer.managedLayer.manager.root.coordinateSpace,
+      layer.channelCoordinateSpace,
     ].map((watchable) => {
       const { valid, rank } = watchable.value;
       const names = Array.from(watchable.value.names);
@@ -747,6 +900,7 @@ export function prepareInferenceInput(
       layer.managedLayer.localCoordinateSpace.changed.add(
         invalidateChangedCoordinates,
       ),
+      layer.channelCoordinateSpace.changed.add(invalidateChangedCoordinates),
       layer.managedLayer.manager.root.coordinateSpace.changed.add(
         invalidateChangedCoordinates,
       ),
@@ -763,6 +917,7 @@ export function prepareInferenceInput(
       layer.renderLayers.filter((r) => r instanceof SliceViewVolumeRenderLayer)
         .length === 1 &&
       source.spec === spec &&
+      spec.rank === rank &&
       spec.dataType === dataType &&
       spec.fillValue === fillValue &&
       arraysEqual(spec.chunkDataSize, chunkSize) &&
@@ -771,8 +926,8 @@ export function prepareInferenceInput(
         selected.chunkToMultiscaleTransform,
         validitySnapshot.chunkToMultiscaleTransform,
       ) &&
-      [0, 1, 2].every(
-        (d) =>
+      lower.every(
+        (_, d) =>
           Math.max(
             spec.lowerVoxelBound[d],
             selected.lowerClipBound?.[d] ?? spec.lowerVoxelBound[d],
@@ -865,6 +1020,7 @@ export function prepareInferenceInput(
       signal: lifetime.signal,
       shapeZYX: Array.from(shapeZYX),
       originZYX: Array.from(validitySnapshot.modelOriginZYX),
+      ...(gridOffsetZYX === undefined ? {} : { gridOffsetZYX }),
       spacingZYX: Array.from(spacingZYX),
       unitsZYX: Array.from(unitsZYX),
       axisNamesZYX: ["z", "y", "x"],
@@ -874,8 +1030,8 @@ export function prepareInferenceInput(
       prefetchVolume(originZYX, patchShapeZYX, signal) {
         if (!isValid() || signal.aborted || lifetime.signal.aborted) return;
         if (originZYX.length !== 3 || patchShapeZYX.length !== 3) return;
-        const gridLower = new Array<number>(3);
-        const gridUpper = new Array<number>(3);
+        const patchLower = fixedLower.slice();
+        const patchUpper = fixedUpper.slice();
         for (let a = 0; a < 3; ++a) {
           const volStart = validitySnapshot.modelOriginZYX[a];
           const volEnd = volStart + shapeZYX[a];
@@ -886,38 +1042,36 @@ export function prepareInferenceInput(
           );
           if (!(reqStart < reqEnd)) return;
           const d = dims[a];
-          const lowerCoord = reqStart - translationZYX[a];
-          const upperCoord = reqEnd - translationZYX[a];
-          gridLower[d] = Math.floor(lowerCoord / spec.chunkDataSize[d]);
-          gridUpper[d] = Math.ceil(upperCoord / spec.chunkDataSize[d]);
+          patchLower[d] = reqStart - translationZYX[a];
+          patchUpper[d] = reqEnd - translationZYX[a];
         }
-        outer: for (let g2 = gridLower[2]; g2 < gridUpper[2]; ++g2) {
-          for (let g1 = gridLower[1]; g1 < gridUpper[1]; ++g1) {
-            for (let g0 = gridLower[0]; g0 < gridUpper[0]; ++g0) {
-              const key = `${g0},${g1},${g2}`;
-              const existing = pendingPrefetch.get(key);
-              if (existing !== undefined) {
-                attachPrefetchCaller(existing, signal);
-                continue;
-              }
-              if (prefetchQueue.length >= MAX_QUEUED_PREFETCH_CHUNKS) {
-                break outer;
-              }
-              const entry: PrefetchEntry = {
-                key,
-                grid: new Float32Array([g0, g1, g2]),
-                callers: new Set(),
-                abort: new AbortController(),
-                cleanupCallers: new Map(),
-                inFlight: false,
-              };
-              pendingPrefetch.set(key, entry);
-              prefetchQueue.push(entry);
-              attachPrefetchCaller(entry, signal);
-              if (activePrefetchCount < MAX_CONCURRENT_PREFETCH_CHUNKS) {
-                pumpPrefetchQueue();
-              }
-            }
+        for (const grid of chunkGridPositions(
+          patchLower,
+          patchUpper,
+          chunkSize,
+        )) {
+          const key = grid.join();
+          const existing = pendingPrefetch.get(key);
+          if (existing !== undefined) {
+            attachPrefetchCaller(existing, signal);
+            continue;
+          }
+          if (prefetchQueue.length >= MAX_QUEUED_PREFETCH_CHUNKS) {
+            break;
+          }
+          const entry: PrefetchEntry = {
+            key,
+            grid,
+            callers: new Set(),
+            abort: new AbortController(),
+            cleanupCallers: new Map(),
+            inFlight: false,
+          };
+          pendingPrefetch.set(key, entry);
+          prefetchQueue.push(entry);
+          attachPrefetchCaller(entry, signal);
+          if (activePrefetchCount < MAX_CONCURRENT_PREFETCH_CHUNKS) {
+            pumpPrefetchQueue();
           }
         }
         pumpPrefetchQueue();
@@ -967,38 +1121,26 @@ export function prepareInferenceInput(
         if (fillNormalized !== 0 || Object.is(fillNormalized, -0)) {
           output.fill(fillNormalized);
         }
-        const patchLower = new Array<number>(3);
-        const gridLower = new Array<number>(3);
-        const gridUpper = new Array<number>(3);
+        const patchLower = fixedLower.slice();
+        const patchUpper = fixedUpper.slice();
         for (let a = 0; a < 3; ++a) {
           const d = dims[a];
           patchLower[d] = originZYX[a] - translationZYX[a];
+          patchUpper[d] = patchLower[d] + patchShapeZYX[a];
           if (
             !Number.isSafeInteger(patchLower[d]) ||
-            !Number.isSafeInteger(patchLower[d] + patchShapeZYX[a])
+            !Number.isSafeInteger(patchUpper[d])
           ) {
             throw new RangeError("Patch coordinates exceed safe integer range");
           }
-          gridLower[d] = Math.floor(patchLower[d] / spec.chunkDataSize[d]);
-          gridUpper[d] = Math.ceil(
-            (patchLower[d] + patchShapeZYX[a]) / spec.chunkDataSize[d],
-          );
         }
         // Keep source I/O overlapped without an unbounded fan-out. Chunk copies
         // are synchronous and write disjoint parts of the patch.
-        const gridShape = gridUpper.map((end, d) => end - gridLower[d]);
-        const chunkCount = gridShape.reduce((a, b) => a * b, 1);
-        let nextChunk = 0;
+        const grids = chunkGridPositions(patchLower, patchUpper, chunkSize);
         const fetchChunks = async () => {
-          while (nextChunk < chunkCount) {
+          for (const grid of grids) {
             combinedSignal.throwIfAborted();
             assertValid();
-            const index = nextChunk++;
-            const grid = new Float32Array([
-              gridLower[0] + (index % gridShape[0]),
-              gridLower[1] + (Math.floor(index / gridShape[0]) % gridShape[1]),
-              gridLower[2] + Math.floor(index / (gridShape[0] * gridShape[1])),
-            ]);
             // baseVoxelOffset is applied by the backend, not here. Applying it
             // again would shift data (precomputed also encodes it in its transform).
             const chunkOrigin = Array.from(
@@ -1014,15 +1156,15 @@ export function prepareInferenceInput(
                   combinedSignal.throwIfAborted();
                   assertValid();
                   const volumeChunk = chunk as VolumeChunk;
-                  if (volumeChunk.chunkDataSize.length !== 3) {
-                    throw new Error("Inference chunk must have rank-3 data");
+                  if (volumeChunk.chunkDataSize.length !== rank) {
+                    throw new Error(
+                      `Inference chunk must have rank-${rank} data`,
+                    );
                   }
-                  for (let a = 0; a < 3; ++a) {
-                    const d = dims[a];
+                  for (let d = 0; d < rank; ++d) {
                     const requiredEnd = Math.min(
                       chunkOrigin[d] + spec.chunkDataSize[d],
-                      patchLower[d] + patchShapeZYX[a],
-                      upper[d],
+                      patchUpper[d],
                     );
                     if (
                       volumeChunk.chunkDataSize[d] > spec.chunkDataSize[d] ||
@@ -1057,9 +1199,7 @@ export function prepareInferenceInput(
             if (!result.ok) throw result.error;
           }
         };
-        const pending = Array.from({ length: Math.min(8, chunkCount) }, () =>
-          fetchChunks(),
-        );
+        const pending = Array.from({ length: 8 }, fetchChunks);
         try {
           await Promise.all(pending);
         } catch (error) {

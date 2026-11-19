@@ -375,7 +375,7 @@ export class InferenceDataSourceProvider implements DataSourceProvider {
   ): Promise<DataSource> {
     const resultId = parseInferenceUrl(url);
     const chunkManager = options.registry.chunkManager;
-    const { info } = requireResult(chunkManager, resultId);
+    const { info, live } = requireResult(chunkManager, resultId);
     await chunkManager.rpc!.promiseInvoke(
       CHECK_INFERENCE_RESULT_RPC_ID,
       {
@@ -412,7 +412,8 @@ export class InferenceDataSourceProvider implements DataSourceProvider {
     });
     const outputSpace = makeCoordinateSpace({ rank: 4, names, units, scales });
     const transform = matrix.createIdentity(Float64Array, 5);
-    for (let i = 0; i < 3; ++i) transform[20 + i] = info.originZYX[2 - i];
+    const displayOrigin = live?.displayOriginZYX ?? info.originZYX;
+    for (let i = 0; i < 3; ++i) transform[20 + i] = displayOrigin[2 - i];
     const volume = new InferenceMultiscaleVolumeChunkSource(
       chunkManager,
       resultId,

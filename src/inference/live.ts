@@ -103,6 +103,8 @@ const PREFETCH_QUEUED_TILE_LOOKAHEAD = 8;
 /** Coordinates bounded, deduplicated live-tile inference and cancellation. */
 export class LiveInference {
   readonly info;
+  /** Output grid placement in viewer voxels; tile addressing stays integral. */
+  readonly displayOriginZYX: readonly number[];
   private jobs = new Map<string, Job>();
   private queue: Job[] = [];
   private activeJobs = new Set<Job>();
@@ -129,6 +131,20 @@ export class LiveInference {
   ) {
     this.geometry = structuredClone(geometry);
     this.info = makeLiveInferenceInfo(input, this.geometry, this.overlap);
+    // The planner works in voxel-center indices; the viewer places voxel corners.
+    // Convert the input center's displacement to output voxels before placing
+    // the output corner. Scalar inputs without an offset retain legacy placement.
+    const offset = input.gridOffsetZYX;
+    this.displayOriginZYX =
+      offset === undefined
+        ? this.info.originZYX
+        : this.info.originZYX.map(
+            (origin, i) =>
+              origin +
+              (offset[i] + 0.5) *
+                (input.spacingZYX[i] / this.info.spacingZYX[i]) -
+              0.5,
+          );
     const invalidate = () => {
       this.dispose();
       onError(

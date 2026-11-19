@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  emptyValidCoordinateSpace,
   makeCoordinateSpace,
   makeIdentityTransform,
   WatchableCoordinateSpaceTransform,
@@ -22,6 +21,7 @@ import { SliceViewVolumeRenderLayer } from "#src/sliceview/volume/renderlayer.js
 import type { TypedArray } from "#src/util/array.js";
 import { DataType } from "#src/util/data_type.js";
 import { valueOrThrow } from "#src/util/error.js";
+import * as matrix from "#src/util/matrix.js";
 import type { ProgressOptions } from "#src/util/progress_listener.js";
 import { NullarySignal } from "#src/util/signal.js";
 
@@ -53,8 +53,8 @@ vi.mock("#src/sliceview/uncompressed_chunk_format.js", () => ({
   },
 }));
 
-function identity() {
-  return new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+function identity(rank = 3) {
+  return matrix.createIdentity(Float32Array, rank + 1);
 }
 
 function watchable<T>(value: T) {
@@ -68,6 +68,9 @@ interface FixtureOptions {
   baseOffset?: number[];
   sourceTransform?: Float32Array;
   names?: string[];
+  outputNames?: string[];
+  uint16?: boolean;
+  uncompressed?: boolean;
   nativeScales?: number[];
   globalScales?: number[];
   absent?: string[];
@@ -76,20 +79,24 @@ interface FixtureOptions {
 
 function fixture(options: FixtureOptions = {}) {
   const {
-    lower = [0, 0, 0],
+    names = ["x", "y", "z"],
+    outputNames = names,
+    lower = names.map(() => 0),
     upper = [5, 4, 3],
     chunkSize = [3, 3, 2],
-    baseOffset = [0, 0, 0],
-    sourceTransform = identity(),
-    names = ["x", "y", "z"],
+    baseOffset = names.map(() => 0),
+    sourceTransform = identity(names.length),
+    uint16 = false,
+    uncompressed = false,
     nativeScales = names.map((name) => ({ x: 2, y: 3, z: 5 })[name] ?? 1),
     globalScales = nativeScales,
     absent = [],
     fillValue = -7,
   } = options;
+  const rank = names.length;
   const spec = {
-    rank: 3,
-    dataType: DataType.FLOAT32,
+    rank,
+    dataType: uint16 ? DataType.UINT16 : DataType.FLOAT32,
     lowerVoxelBound: new Float32Array(lower),
     upperVoxelBound: new Float32Array(upper),
     chunkDataSize: new Uint32Array(chunkSize),
@@ -101,7 +108,7 @@ function fixture(options: FixtureOptions = {}) {
     string,
     {
       chunkDataSize: Uint32Array;
-      data: Float32Array | null;
+      data: Float32Array | Uint16Array | null;
       getValueAt(position: Uint32Array): number | bigint;
     }
   >();
@@ -129,29 +136,29 @@ function fixture(options: FixtureOptions = {}) {
           const size = new Uint32Array(
             chunkSize.map((n, d) => Math.min(n, upper[d] - origin[d])),
           );
+          const ArrayType = uint16 ? Uint16Array : Float32Array;
           const data = absent.includes(key)
             ? null
-            : new Float32Array(size[0] * size[1] * size[2]);
+            : new ArrayType(size.reduce((n, x) => n * x, 1));
           if (data !== null) {
-            let i = 0;
-            for (let c2 = 0; c2 < size[2]; ++c2) {
-              for (let c1 = 0; c1 < size[1]; ++c1) {
-                for (let c0 = 0; c0 < size[0]; ++c0) {
-                  const p = [c0 + origin[0], c1 + origin[1], c2 + origin[2]];
-                  const model = [0, 1, 2].map(
-                    (m) =>
-                      sourceTransform[12 + m] +
-                      p.reduce(
-                        (v, x, c) => v + x * sourceTransform[4 * c + m],
-                        0,
-                      ),
-                  );
-                  const xyz = ["x", "y", "z"].map(
-                    (name) => model[names.indexOf(name)],
-                  );
-                  data[i++] = xyz[0] + 10 * xyz[1] + 100 * xyz[2];
-                }
-              }
+            for (let i = 0; i < data.length; ++i) {
+              let index = i;
+              const p = origin.map((x, d) => {
+                const offset = index % size[d];
+                index = Math.floor(index / size[d]);
+                return x + offset;
+              });
+              const model = names.map((_, m) =>
+                p.reduce(
+                  (v, x, c) => v + x * sourceTransform[(rank + 1) * c + m],
+                  sourceTransform[(rank + 1) * rank + m],
+                ),
+              );
+              data[i] = names.reduce(
+                (v, name, m) =>
+                  v + model[m] * ({ x: 1, y: 10, z: 100 }[name] ?? 4096),
+                0,
+              );
             }
           }
           chunk = {
@@ -162,9 +169,16 @@ function fixture(options: FixtureOptions = {}) {
                 throw new Error("Source accessed outside fetchChunk callback");
               return this.data === null
                 ? spec.fillValue
-                : this.data[(p[2] * size[1] + p[1]) * size[0] + p[0]];
+                : this.data[
+                    p.reduceRight((index, x, d) => index * size[d] + x, 0)
+                  ];
             },
           };
+          if (uncompressed)
+            Object.assign(chunk, {
+              getValueAt: UncompressedVolumeChunk.prototype.getValueAt,
+              source,
+            });
           cache.set(key, chunk);
         }
         inCallback = true;
@@ -176,34 +190,49 @@ function fixture(options: FixtureOptions = {}) {
       },
     ),
   };
-  const nativeSpace = {
-    ...makeCoordinateSpace({
-      valid: true,
-      names,
-      scales: new Float64Array(nativeScales),
-      units: ["m", "m", "m"],
-    }),
-    names: [...names],
-    units: ["m", "m", "m"],
-  };
-  const globalSpace = watchable({
-    ...nativeSpace,
-    names: [...names],
+  const units = names.map((name) =>
+    ["x", "y", "z"].includes(name) ? "m" : "",
+  );
+  const nativeSpace = makeCoordinateSpace({
+    names,
+    units,
+    scales: new Float64Array(nativeScales),
+  });
+  const outputSpace = makeCoordinateSpace({
+    names: outputNames,
+    units,
     scales: new Float64Array(globalScales),
-    units: [...nativeSpace.units],
-    coordinateArrays: [...nativeSpace.coordinateArrays],
   });
-  const localSpace = watchable({
-    ...emptyValidCoordinateSpace,
-    names: [] as string[],
-  });
-  const channelCoordinateSpace = watchable(emptyValidCoordinateSpace);
+  function viewerSpace(filter: (name: string) => boolean) {
+    const dims = outputNames
+      .map((_, d) => d)
+      .filter((d) => filter(outputNames[d]));
+    const names = dims.map((d) => outputNames[d]);
+    const units = dims.map((d) => outputSpace.units[d]);
+    return watchable({
+      ...makeCoordinateSpace({
+        names,
+        units,
+        scales: Float64Array.from(dims, (d) => globalScales[d]),
+      }),
+      names,
+      units,
+    });
+  }
+  const globalSpace = viewerSpace(
+    (name) => !name.endsWith("'") && !name.endsWith("^"),
+  );
+  const localSpace = viewerSpace((name) => name.endsWith("'"));
+  const channelCoordinateSpace = viewerSpace((name) => name.endsWith("^"));
+  // Shader-channel render transforms require a finite zero-based channel space.
+  channelCoordinateSpace.value.bounds.lowerBounds.fill(0);
+  channelCoordinateSpace.value.bounds.upperBounds.fill(8);
   const modelTransform = makeIdentityTransform(nativeSpace);
   const subsource = {
     enabled: true,
     activated: {} as object | undefined,
-    subsourceToModelSubspaceTransform: identity(),
-    modelSubspaceDimensionIndices: [0, 1, 2],
+    subsourceToModelSubspaceTransform: identity(rank),
+    modelSubspaceDimensionIndices: names.map((_, i) => i),
     subsourceEntry: { subsource: { volume: undefined as unknown } },
   };
   const currentTransform = new WatchableCoordinateSpaceTransform(
@@ -211,7 +240,7 @@ function fixture(options: FixtureOptions = {}) {
   );
   // CoordinateSpaceCombiner rebinds loaded transform output metadata to the
   // viewer's global grid. The setter converts translation, not linear terms.
-  currentTransform.outputSpace.value = globalSpace.value;
+  currentTransform.outputSpace.value = outputSpace;
   const transform = valueOrThrow(
     getRenderLayerTransform(
       globalSpace.value,
@@ -228,7 +257,7 @@ function fixture(options: FixtureOptions = {}) {
     upperClipBound: undefined as Float32Array | undefined,
   };
   const multiscale = {
-    rank: 3,
+    rank,
     getSources: vi.fn((_options: unknown) => [[selected]]),
   };
   subsource.subsourceEntry.subsource.volume = multiscale;
@@ -261,8 +290,12 @@ function fixture(options: FixtureOptions = {}) {
       manager: { root: { coordinateSpace: globalSpace } },
     },
   };
-  const prepare = (scaleIndex = 0) =>
-    prepareInferenceInput(layer as unknown as ImageUserLayer, scaleIndex);
+  const prepare = (scaleIndex = 0, inputChannel = 0) =>
+    prepareInferenceInput(
+      layer as unknown as ImageUserLayer,
+      scaleIndex,
+      inputChannel,
+    );
   const scales = () =>
     getInferenceInputScales(layer as unknown as ImageUserLayer);
   const metadata = () =>
@@ -1438,6 +1471,236 @@ describe("prepareInferenceInput", () => {
   });
 });
 
+describe("rank-4 single-channel inference input", () => {
+  // Zarr-like CZYX native model, independently permuted/interleaved storage
+  // C,X,Z,Y (C fastest). Scale/translation apply on the selected spatial grid.
+  function channelFixture(
+    native = "c'",
+    output = native,
+    uncompressed = false,
+  ) {
+    const transform = new Float32Array([
+      1, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 3, 0, 0, 0, 0, 0, 2, 0, 0, 1, 6, 4, 2, 1,
+    ]);
+    const f = fixture({
+      names: [native, "z", "y", "x"],
+      outputNames: [output, "z", "y", "x"],
+      sourceTransform: transform,
+      upper: [8, 5, 3, 4],
+      chunkSize: [3, 3, 2, 3],
+      baseOffset: [32, 0, 0, 0],
+      uint16: true,
+      uncompressed,
+    });
+    // Extent starts inside a channel chunk, and the final chunk is short.
+    f.selected.lowerClipBound = new Float32Array([2, 0, 0, 0]);
+    f.multiscale.getSources.mockImplementation(() => {
+      f.source.addRef();
+      return [[f.selected]];
+    });
+    return f;
+  }
+
+  it.each([
+    { native: "c'", output: "c'", uncompressed: true }, // OME-Zarr local channel
+    { native: "c", output: "c'", uncompressed: false }, // Output renamed by layer
+    { native: "c^", output: "c^", uncompressed: false }, // Shader channel
+  ])(
+    "reads and prefetches only selected channel ($native -> $output, raw=$uncompressed)",
+    async ({ native, output, uncompressed }) => {
+      const f = channelFixture(native, output, uncompressed);
+      expect(f.scales()).toEqual([
+        {
+          scaleIndex: 0,
+          channelCount: 6,
+          spacingZYX: [15, 6, 4],
+          unitsZYX: ["m", "m", "m"],
+          axisNamesZYX: ["z", "y", "x"],
+        },
+      ]);
+      expect(f.multiscale.getSources).toHaveBeenCalledWith(
+        expect.objectContaining({
+          modelChannelDimensionIndices: [],
+          multiscaleToViewTransform: new Float32Array([
+            0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1,
+          ]),
+        }),
+      );
+      const selected = f.prepare(0, 5);
+      expect(selected.originZYX).toEqual([2, 2, 1]);
+      expect(selected.gridOffsetZYX).toEqual([0, 0, 0]);
+      expect(selected.shapeZYX).toEqual([3, 4, 5]);
+      expect(selected.validitySnapshot.inputChannel).toBe(5);
+      // Clamp the speculative box to the same spatial volume, never requesting
+      // neighbor channel chunks. Use the actual short-edge strides for packing.
+      const grids = () =>
+        f.source.fetchChunk.mock.calls.map(([grid]) => grid.join()).sort();
+      const expectedGrids = [0, 1]
+        .flatMap((y) =>
+          [0, 1].flatMap((z) => [0, 1].map((x) => `2,${x},${z},${y}`)),
+        )
+        .sort();
+      selected.prefetchVolume!([-3, -3, -3], [16, 16, 16], signal());
+      expect(grids()).toEqual(expectedGrids);
+      f.source.fetchChunk.mockClear();
+      const expected = (modelChannel: number) =>
+        Float32Array.from(
+          codedPatch(selected.originZYX, selected.shapeZYX, [3, 2, 2]),
+          (v) => (4096 * modelChannel + v) / 65535,
+        );
+      expect(
+        await selected.readPatch(
+          selected.originZYX,
+          selected.shapeZYX,
+          signal(),
+        ),
+      ).toEqual(expected(8));
+      expect(grids()).toEqual(expectedGrids);
+      // Channel zero is the first clipped channel, not the viewer position or
+      // backend offset. A separate preparation cannot reuse another channel's tiles.
+      const first = f.prepare();
+      expect(first.validitySnapshot.inputChannel).toBe(0);
+      expect(
+        await first.readPatch(first.originZYX, first.shapeZYX, signal()),
+      ).toEqual(expected(3));
+      f.selected.lowerClipBound![0] = 1;
+      expect(selected.isValid()).toBe(false);
+      first.dispose();
+      selected.dispose();
+      expect(f.source.refCount).toBe(1);
+    },
+  );
+
+  it.each([
+    {
+      translation: [-0.5, -0.5, -0.5, -0.5],
+      integer: [0, 0, 0],
+      offset: [-0.5, -0.25, -0.25],
+    },
+    {
+      translation: [-0.5, -1.25, 3, -1],
+      integer: [-1, 1, 0],
+      offset: [-0.25, 0.5, -0.5],
+    },
+  ])(
+    "preserves OME voxel-center placement ($translation) without shifting storage reads",
+    async ({ translation, integer, offset }) => {
+      // Real source at scale 1: XYZC storage -> C'ZYX model, X/Y downsampled
+      // by two, with translation in model voxels, not selected-scale voxels.
+      const perm = new Float32Array([
+        0, 0, 0, 2, 0, 0, 0, 2, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+        1,
+      ]);
+      const f = fixture({
+        names: ["c'", "z", "y", "x"],
+        sourceTransform: perm,
+        upper: [5, 4, 3, 3],
+        chunkSize: [3, 3, 2, 2],
+        uint16: true,
+        uncompressed: true,
+      });
+      // Keep voxel values independent of their physical translation.
+      f.selected.chunkToMultiscaleTransform = perm.slice();
+      f.selected.chunkToMultiscaleTransform.set(translation, 20);
+      const input = f.prepare(0, 1);
+      expect(input.originZYX).toEqual(integer);
+      expect(input.gridOffsetZYX).toEqual(offset);
+      expect(input.shapeZYX).toEqual([3, 4, 5]);
+      expect(input.spacingZYX).toEqual([5, 6, 4]);
+      expect(await input.readPatch(integer, input.shapeZYX, signal())).toEqual(
+        Float32Array.from(
+          codedPatch([0, 0, 0], input.shapeZYX, [1, 2, 2]),
+          (v) => (v + 4096) / 65535,
+        ),
+      );
+      expect(
+        f.source.fetchChunk.mock.calls.every(
+          ([grid]) => grid.length === 4 && grid[3] === 0,
+        ),
+      ).toBe(true);
+      input.dispose();
+    },
+  );
+
+  it("resolves the extent and index against the requested scale, not the first", () => {
+    const f = channelFixture();
+    f.multiscale.getSources.mockImplementation(() => {
+      f.source.addRef();
+      f.source.addRef();
+      return [
+        [
+          f.selected,
+          { ...f.selected, upperClipBound: new Float32Array([4, 5, 3, 4]) },
+        ],
+      ];
+    });
+    expect(f.scales().map((s) => s.channelCount)).toEqual([6, 2]);
+    expect(() => f.prepare(1, 2)).toThrow(RangeError);
+    const input = f.prepare(1, 1);
+    input.dispose();
+    expect(f.source.refCount).toBe(1);
+  });
+
+  it.each([-1, 0.5, NaN, Infinity, 6])(
+    "rejects invalid channel %s before any fetch",
+    (channel) => {
+      const f = channelFixture();
+      expect(() => f.prepare(0, channel)).toThrow(RangeError);
+      expect(f.source.fetchChunk).not.toHaveBeenCalled();
+      expect(f.source.refCount).toBe(1);
+    },
+  );
+
+  it("allows only channel zero on rank 3 without adding channel metadata", () => {
+    const f = fixture();
+    expect(f.scales()[0]).not.toHaveProperty("channelCount");
+    expect(() => f.prepare(0, 1)).toThrow(RangeError);
+    const g = fixture();
+    const input = g.prepare();
+    expect(input.validitySnapshot).not.toHaveProperty("inputChannel");
+    expect(input).not.toHaveProperty("gridOffsetZYX");
+    input.dispose();
+  });
+
+  it.each(["t", "t'", "w"])(
+    "does not guess an unknown fourth dimension %s is a channel",
+    (name) => {
+      const f = channelFixture(name);
+      expect(f.scales).toThrow(/channel axis/);
+      expect(f.prepare).toThrow(/channel axis/);
+    },
+  );
+
+  it.each(["scale", "nonfinite origin", "fractional extent", "empty extent"])(
+    "rejects a channel grid with %s",
+    (kind) => {
+      const f = channelFixture();
+      if (kind === "scale") f.selected.chunkToMultiscaleTransform[0] = 2;
+      if (kind === "nonfinite origin")
+        f.selected.chunkToMultiscaleTransform[20] = Infinity;
+      if (kind === "fractional extent") f.selected.lowerClipBound![0] = 0.5;
+      if (kind === "empty extent") f.selected.lowerClipBound![0] = 8;
+      expect(f.scales).toThrow(/channel axis/);
+      expect(f.prepare).toThrow(/channel axis/);
+      expect(f.source.refCount).toBe(1);
+    },
+  );
+
+  it("rejects an edge chunk that does not contain the selected channel", async () => {
+    const f = channelFixture();
+    const input = f.prepare(0, 5);
+    f.source.fetchChunk.mockImplementationOnce(async (_grid, copy) =>
+      copy({
+        chunkDataSize: new Uint32Array([1, 3, 2, 3]),
+      } as unknown as VolumeChunk),
+    );
+    await expect(
+      input.readPatch(input.originZYX, [1, 1, 1], signal()),
+    ).rejects.toThrow("does not cover");
+    input.dispose();
+  });
+});
+
 describe("unsupported inference sources", () => {
   it.each([
     undefined,
@@ -1502,7 +1765,7 @@ describe("unsupported inference sources", () => {
     },
   );
 
-  it("rejects no volume, multiple volumes, non-rank3, channels, unknown spacing, and fractional bounds", () => {
+  it("rejects no volume, multiple volumes, mismatched rank, spatial channel axes, unknown spacing, and fractional bounds", () => {
     const none = fixture();
     none.layer.renderLayers = [];
     expect(none.prepare).toThrow("exactly one");
@@ -1511,7 +1774,7 @@ describe("unsupported inference sources", () => {
     expect(multi.prepare).toThrow("exactly one");
     const rank4 = fixture();
     rank4.multiscale.rank = 4;
-    expect(rank4.prepare).toThrow("rank-3");
+    expect(rank4.prepare).toThrow("model and volume ranks must match");
     const channels = fixture();
     channels.transform.channelToRenderLayerDimensions = [0];
     expect(channels.prepare).toThrow("channel dimensions");

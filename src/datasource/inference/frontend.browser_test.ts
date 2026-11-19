@@ -213,6 +213,8 @@ describe("session inference volume RPC", () => {
       );
       const input = {
         originZYX: [3, 7, 11],
+        // A voxel-centered input needs subvoxel placement, not resampling.
+        gridOffsetZYX: large ? undefined : [-0.25, -0.5, 0.5],
         shapeZYX: large ? [9949, 327680, 327680] : [40, 256, 256],
         spacingZYX: [45, 16, 16],
         axisNamesZYX: ["z", "y", "x"],
@@ -239,7 +241,7 @@ describe("session inference volume RPC", () => {
       const dataSource = await getSource(session.registry, handle.url);
       expect(
         Array.from(dataSource.modelTransform.transform!.slice(20, 24)),
-      ).toEqual([27, 23, 14, 0]);
+      ).toEqual(large ? [27, 23, 14, 0] : [27.5, 22.5, 14.25, 0]);
       expect(Array.from(dataSource.modelTransform.inputSpace.scales)).toEqual([
         16e-9, 16e-9, 15e-9, 1,
       ]);
