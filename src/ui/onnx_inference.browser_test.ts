@@ -706,7 +706,7 @@ describe("inference input scale selection", () => {
     session.confirmed = true;
     session.open();
     expect(listInputScales).toHaveBeenCalledExactlyOnceWith(a.layer);
-    expect(prepare).toHaveBeenCalledExactlyOnceWith(a.layer, 0);
+    expect(prepare).toHaveBeenCalledExactlyOnceWith(a.layer, 0, 0);
     expect(listInputScales.mock.invocationCallOrder[0]).toBeLessThan(
       prepare.mock.invocationCallOrder[0],
     );
@@ -725,7 +725,7 @@ describe("inference input scale selection", () => {
     const previous = session.input!;
     chooseInputScale(session, 1);
     expect(previous.dispose).toHaveBeenCalledOnce();
-    expect(prepare).toHaveBeenLastCalledWith(a.layer, 1);
+    expect(prepare).toHaveBeenLastCalledWith(a.layer, 1, 0);
     expect(session.input).toBe(prepared[1]);
     expect(session.input!.spacingZYX).toEqual([90e-9, 48e-9, 24e-9]);
     expect(session.inputScaleIndex).toBe(1);
@@ -749,6 +749,70 @@ describe("inference input scale selection", () => {
     chooseInputScale(session, 1);
     expect(prepare).toHaveBeenCalledTimes(2);
     expect(current.dispose).not.toHaveBeenCalled();
+  });
+
+  it("pins the chosen input channel for live inference and sharing, and resets for a scalar source", async () => {
+    const { session, a, b, prepare, scales, listInputScales, publishLive } =
+      multiscaleFixture();
+    listInputScales.mockReturnValue(
+      scales.map((s) => ({ ...s, channelCount: 4 })),
+    );
+    session.selectSource(undefined);
+    session.selectSource(a);
+    session.open();
+    const channel = session.dialog!.body.querySelector<HTMLInputElement>(
+      '[aria-label="Input channel"]',
+    )!;
+    expect([channel.min, channel.max, channel.value, channel.disabled]).toEqual(
+      ["0", "3", "0", false],
+    );
+    confirmationField(session).click();
+    const previous = session.input!;
+    channel.value = "3";
+    channel.dispatchEvent(new Event("change"));
+    expect(previous.dispose).toHaveBeenCalledOnce();
+    expect(session.confirmed).toBe(false);
+    expect(prepare).toHaveBeenLastCalledWith(a.layer, 0, 3);
+    chooseInputScale(session, 1);
+    expect(prepare).toHaveBeenLastCalledWith(a.layer, 1, 3);
+    confirmationField(session).click();
+    vi.mocked(makeInferenceRecipeSource).mockClear();
+    await session.run();
+    expect(publishLive).toHaveBeenCalledOnce();
+    expect(
+      vi.mocked(makeInferenceRecipeSource).mock.lastCall![1],
+    ).toMatchObject({ inputScaleIndex: 1, inputChannel: 3 });
+    listInputScales.mockReturnValue(scales);
+    session.selectSource(b);
+    expect(prepare).toHaveBeenLastCalledWith(b.layer, 0, 0);
+    expect(channel.disabled).toBe(true);
+    expect(channel.value).toBe("0");
+  });
+
+  it("rejects an invalid channel and shows when another scale requires channel zero", () => {
+    const { session, a, scales, prepare, listInputScales } =
+      multiscaleFixture();
+    listInputScales.mockReturnValue(
+      scales.map((s, i) => ({ ...s, channelCount: i === 0 ? 2 : 1 })),
+    );
+    session.selectSource(undefined);
+    session.selectSource(a);
+    session.open();
+    const channel = session.dialog!.body.querySelector<HTMLInputElement>(
+      '[aria-label="Input channel"]',
+    )!;
+    session.selectInputChannel(1);
+    const selected = session.input;
+    channel.value = "2";
+    channel.dispatchEvent(new Event("change"));
+    expect(channel.value).toBe("1");
+    expect(session.input).toBe(selected);
+    expect(session.statusLevel).toBe("error");
+    chooseInputScale(session, 1);
+    expect(channel.value).toBe("0");
+    expect(channel.disabled).toBe(true);
+    expect(session.status).toContain("Channel 1 is unavailable");
+    expect(prepare).toHaveBeenLastCalledWith(a.layer, 1, 0);
   });
 
   it("uses input spacing before metadata and recomputes for the selected scale when the model loads", async () => {
@@ -801,7 +865,7 @@ describe("inference input scale selection", () => {
     a.layer!.dataSourcesChanged.dispatch();
     await Promise.resolve();
     expect(previous.dispose).toHaveBeenCalledOnce();
-    expect(prepare).toHaveBeenLastCalledWith(a.layer, 1);
+    expect(prepare).toHaveBeenLastCalledWith(a.layer, 1, 0);
     session.refreshSources();
     controller.onMetadata(metadata);
     await session.loadModel(new File(["model"], "model.onnx"));
@@ -820,7 +884,7 @@ describe("inference input scale selection", () => {
     expect(session.source).toBe(b);
     expect(session.inputScaleIndex).toBe(0);
     expect(inputScaleField(session).value).toBe("0");
-    expect(prepare).toHaveBeenLastCalledWith(b.layer, 0);
+    expect(prepare).toHaveBeenLastCalledWith(b.layer, 0, 0);
   });
 
   it("uses the selected scale's data and geometry for live inference and emits its index in the saved recipe", async () => {
@@ -2755,7 +2819,7 @@ describe("ONNX configuration disclosure sections", () => {
       title: "Navigation and raw input details",
       paragraphs: [
         "Result navigation stays linked to the source. Link any unlinked source-group navigation first; existing groups are never relinked automatically.",
-        "Source raw float values are passed to the model unchanged, without normalization. Verify that the source values and voxel sizes match the model's training requirements.",
+        "Inference reads only the selected input channel, independently of display settings. Float32 values are unchanged. Integer values are divided by their positive dtype maximum (65535 for uint16), not by the displayed intensity range. Verify that these values and voxel sizes match the model's training requirements.",
       ],
     },
   ];
@@ -2907,7 +2971,7 @@ describe("viewer-owned ONNX UI state", () => {
       const controls = body.querySelectorAll<
         HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
       >("input, select, textarea");
-      expect(controls).toHaveLength(9);
+      expect(controls).toHaveLength(10);
       for (const control of controls) {
         expect(control.labels).toHaveLength(1);
         const label = control.labels![0];
@@ -2961,9 +3025,7 @@ describe("viewer-owned ONNX UI state", () => {
     expect(body.textContent).not.toMatch(
       /Explicit.*ROI|Output ROI|Preprocessing|scale\/offset/,
     );
-    expect(body.textContent).toContain(
-      "Source raw float values are passed to the model unchanged, without normalization.",
-    );
+    expect(body.textContent).toContain("Float32 values are unchanged.");
     expect(body.querySelector("progress")).toBeNull();
     expect(
       Array.from(footer.querySelectorAll("button")).map(
@@ -2987,7 +3049,7 @@ describe("viewer-owned ONNX UI state", () => {
     const select = session.dialog!.body.querySelector("select")!;
     select.value = "0";
     select.dispatchEvent(new Event("change"));
-    expect(prepare).toHaveBeenCalledWith(a.layer, 0);
+    expect(prepare).toHaveBeenCalledWith(a.layer, 0, 0);
     expect(session.inputScaleIndex).toBe(0);
     expect(inputScaleField(session).value).toBe("0");
     expect(inputScaleField(session).disabled).toBe(false);

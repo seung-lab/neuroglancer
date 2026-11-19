@@ -28,6 +28,16 @@ coordinates connect source context, model output, and displayed predictions.
 Changing the viewport changes demand rather than the model's sampling grid.
 Unsupported mappings are rejected instead of silently resampled or guessed.
 
+For a volume with X, Y, Z and a channel axis (such as `c'`), use **Input
+channel** in the ONNX dialog to choose a zero-based channel at the selected
+input scale. Each model input patch contains only that channel (`C = 1` in
+`[N, C, Z, Y, X]`). Changing the displayed channel or shader contrast does not
+change inference.
+Scalar volumes need no selection. Float32 samples are passed through; integer
+samples are divided by the positive maximum of their datatype. For example,
+uint16 values 0 and 65535 become 0.0 and 1.0 regardless of the display range.
+The saved inference recipe retains the channel selection.
+
 Model patches and display chunks are separate units. Patches follow a globally
 source-anchored lattice so neighboring chunks use consistent context. Output
 cropping retains interior patch regions; optional weighted blending combines

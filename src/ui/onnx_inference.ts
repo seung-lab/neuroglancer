@@ -211,6 +211,11 @@ export class OnnxInferenceSession extends RefCounted {
   sourceMetadata: ReturnType<typeof getInferenceInputMetadata> | undefined;
   inputScales: ReturnType<typeof getInferenceInputScales> = [];
   inputScaleIndex = 0;
+  inputChannel = 0;
+  get channelCount() {
+    return this.inputScales.find((s) => s.scaleIndex === this.inputScaleIndex)
+      ?.channelCount;
+  }
   metadata: ModelMetadata | undefined;
   modelName = "";
   // Viewer-owned draft: metadata notifications and dialog recreation must not
@@ -332,11 +337,33 @@ export class OnnxInferenceSession extends RefCounted {
       "Input scale changed; confirm settings before running.",
       "warning",
     );
-    this.input?.dispose();
-    this.input = undefined;
     this.inputScaleIndex = scaleIndex;
     this.outputSpacingEdited = false;
     this.outputSpacing = "";
+    this.replaceInput();
+  }
+
+  selectInputChannel(channel: number) {
+    if (channel === this.inputChannel) return;
+    const max = (this.channelCount ?? 1) - 1;
+    if (!Number.isSafeInteger(channel) || channel < 0 || channel > max) {
+      this.invalidate(
+        `Choose an integer channel from 0 to ${max}. Input channel is still ${this.inputChannel}.`,
+        "error",
+      );
+      return;
+    }
+    this.invalidate(
+      "Input channel changed; confirm settings before running.",
+      "warning",
+    );
+    this.inputChannel = channel;
+    this.replaceInput();
+  }
+
+  private replaceInput() {
+    this.input?.dispose();
+    this.input = undefined;
     this.prepareSource();
     this.changed.dispatch();
   }
@@ -401,7 +428,18 @@ export class OnnxInferenceSession extends RefCounted {
           (scale) => scale.scaleIndex === this.inputScaleIndex,
         );
       }
-      this.input = this.dependencies.prepareInput(layer, this.inputScaleIndex);
+      if (this.inputChannel >= (this.channelCount ?? 1)) {
+        this.setStatus(
+          `Channel ${this.inputChannel} is unavailable at this input scale. Channel 0 selected; confirm settings before running.`,
+          "warning",
+        );
+        this.inputChannel = 0;
+      }
+      this.input = this.dependencies.prepareInput(
+        layer,
+        this.inputScaleIndex,
+        this.inputChannel,
+      );
       this.sourceMetadata = this.input;
     } catch (error) {
       this.setStatus(
@@ -439,6 +477,7 @@ export class OnnxInferenceSession extends RefCounted {
     this.sourceMetadata = undefined;
     this.inputScales = [];
     this.inputScaleIndex = 0;
+    this.inputChannel = 0;
     this.source = undefined;
   }
 
@@ -848,6 +887,9 @@ export class OnnxInferenceSession extends RefCounted {
         mode: "live",
         spacingZYX: input.spacingZYX,
         inputScaleIndex: this.inputScaleIndex,
+        ...(this.channelCount === undefined
+          ? {}
+          : { inputChannel: this.inputChannel }),
       });
       // Validate before expensive inference, then replan against the current
       // layout when publishing rather than retaining this preflight snapshot.
@@ -1158,6 +1200,17 @@ export class OnnxInferenceDialog extends FramedDialog {
     inputScale.addEventListener("change", () =>
       session.selectInputScale(Number(inputScale.value)),
     );
+    const inputChannel = document.createElement("input");
+    inputChannel.type = "number";
+    inputChannel.min = "0";
+    inputChannel.step = "1";
+    inputChannel.setAttribute("aria-label", "Input channel");
+    row("Input channel", inputChannel);
+    const channelRange = document.createTextNode("");
+    inputChannel.after(channelRange);
+    inputChannel.addEventListener("change", () =>
+      session.selectInputChannel(inputChannel.valueAsNumber),
+    );
     const outputSpacingField = document.createElement("input");
     outputSpacingField.type = "text";
     row(
@@ -1172,13 +1225,13 @@ export class OnnxInferenceDialog extends FramedDialog {
     });
     addDetails(
       "Navigation and raw input details",
-      "Result navigation stays linked to the source. Link any unlinked source-group navigation first; existing groups are never relinked automatically. Source raw float values are passed to the model unchanged, without normalization. Verify that the source values and voxel sizes match the model's training requirements.",
+      "Result navigation stays linked to the source. Link any unlinked source-group navigation first; existing groups are never relinked automatically. Inference reads only the selected input channel, independently of display settings. Float32 values are unchanged. Integer values are divided by their positive dtype maximum (65535 for uint16), not by the displayed intensity range. Verify that these values and voxel sizes match the model's training requirements.",
     );
     const confirm = document.createElement("input");
     confirm.type = "checkbox";
     confirm.name = "confirm-inference-settings";
     row(
-      "I verified the native input voxel size, output voxel size, centered model/crop geometry, and raw source values against this model's training requirements.",
+      "I verified the native input voxel size, output voxel size, centered model/crop geometry, and input values against this model's training requirements.",
       confirm,
     );
     confirm.addEventListener("change", () => {
@@ -1296,11 +1349,21 @@ export class OnnxInferenceDialog extends FramedDialog {
       if (session.inputScales.length === 0)
         inputScale.add(new Option("No available scales", ""));
       else inputScale.value = String(session.inputScaleIndex);
+      const channelCount = session.channelCount;
+      inputChannel.max = String((channelCount ?? 1) - 1);
+      inputChannel.valueAsNumber = session.inputChannel;
+      channelRange.textContent =
+        channelCount === undefined
+          ? ""
+          : channelCount === 1
+            ? " (only channel)"
+            : ` (0–${channelCount - 1})`;
       confirm.checked = session.confirmed;
       const locked = session.busy || session.liveActive;
       source.disabled = session.busy;
       confirm.disabled = locked;
       inputScale.disabled = locked || session.inputScales.length === 0;
+      inputChannel.disabled = locked || (channelCount ?? 1) <= 1;
       outputSpacingField.disabled = locked;
       // Downloads may be superseded by another URL or provider change.
       modelUrl.disabled = loadUrl.disabled =
