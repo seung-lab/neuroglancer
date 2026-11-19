@@ -6,8 +6,10 @@ import "#layer/segmentation";
 import {
   PerspectiveViewSkeletonLayer,
   type SkeletonLayer,
+  SkeletonRenderingOptions,
   SliceViewPanelSkeletonLayer,
 } from "#src/skeleton/frontend.js";
+import { TrackableBooleanCheckbox } from "#src/trackable_boolean.js";
 import { DataType } from "#src/util/data_type.js";
 import { RefCounted } from "#src/util/disposable.js";
 import { mat4 } from "#src/util/geom.js";
@@ -37,6 +39,54 @@ void emit(vec4 color, highp uint pickId) {
 }
 `);
 }
+
+it("edits 2D node size without changing the saved mode format", () => {
+  const resources = new RefCounted();
+  try {
+    const options = new SkeletonRenderingOptions(resources);
+    const enlarge = resources.registerDisposer(
+      new TrackableBooleanCheckbox(options.params2d.mode.enlargeNodes),
+    ).element;
+    document.body.append(enlarge);
+    expect(enlarge.checked).toBe(true);
+    options.restoreState({ mode2d: "lines", lineWidth2d: 7 });
+    expect(enlarge.checked).toBe(false);
+    enlarge.click();
+    expect(enlarge.checked).toBe(true);
+    expect(options.toJSON().mode2d).toBeUndefined();
+    enlarge.click();
+    expect(options.toJSON()).toMatchObject({ mode2d: "lines", lineWidth2d: 7 });
+  } finally {
+    resources.dispose();
+  }
+});
+
+it("edits 3D shading and node size independently without changing the saved mode format", () => {
+  const resources = new RefCounted();
+  try {
+    const options = new SkeletonRenderingOptions(resources);
+    const { shaded, enlargeNodes } = options.params3d.mode;
+    const shade = resources.registerDisposer(
+      new TrackableBooleanCheckbox(shaded),
+    ).element;
+    const enlarge = resources.registerDisposer(
+      new TrackableBooleanCheckbox(enlargeNodes),
+    ).element;
+    document.body.append(shade, enlarge);
+    options.restoreState({ mode3d: "cylinders_and_balls" });
+    expect([shade.checked, enlarge.checked]).toEqual([true, true]);
+    shade.click();
+    expect([shade.checked, enlarge.checked]).toEqual([false, true]);
+    expect(options.toJSON().mode3d).toBe("lines_and_points");
+    enlarge.click();
+    expect(options.toJSON()?.mode3d).toBeUndefined();
+    shade.click();
+    expect([shade.checked, enlarge.checked]).toEqual([true, false]);
+    expect(options.toJSON().mode3d).toBe("cylinders");
+  } finally {
+    resources.dispose();
+  }
+});
 
 function makeSkeletonShaderTest(
   resources: RefCounted,

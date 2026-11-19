@@ -32,6 +32,9 @@ On the segmentation layer's **Render** tab, set **Thickness** to
 The 2D view shows the slice's intersection with the tapered edges and spherical
 nodes; the 3D view shows their surfaces. **Fixed pixels** preserves the line
 width and skeleton mode settings.
+For 3D fixed-pixel rendering, **Shade skeleton** switches from flat lines
+and points to lit cylinders and spheres. In either fixed-pixel view,
+**Enlarge skeleton nodes** makes nodes wider than the edges.
 
 .. _precomputed-skeleton-format-encoding:
 

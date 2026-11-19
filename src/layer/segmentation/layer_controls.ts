@@ -1,10 +1,8 @@
 import type { SegmentationUserLayer } from "#src/layer/segmentation/index.js";
 import * as json_keys from "#src/layer/segmentation/json_keys.js";
-import type { SkeletonRenderMode } from "#src/skeleton/frontend.js";
 import type { LayerControlDefinition } from "#src/widget/layer_control.js";
 import { registerLayerControl } from "#src/widget/layer_control.js";
 import { checkboxLayerControl } from "#src/widget/layer_control_checkbox.js";
-import { enumLayerControl } from "#src/widget/layer_control_enum.js";
 import { rangeLayerControl } from "#src/widget/layer_control_range.js";
 import { renderScaleLayerControl } from "#src/widget/render_scale_widget.js";
 import {
@@ -167,15 +165,31 @@ function getViewSpecificSkeletonRenderingControl(
       },
       activateTool() {},
     },
+    ...(viewName === "3d"
+      ? ([
+          {
+            label: "Shade skeleton (3d)",
+            title:
+              "Draw lit cylinders and spheres instead of flat lines and points",
+            toolJson: `${json_keys.SKELETON_RENDERING_JSON_KEY}.shade3d`,
+            isValid: (layer) => layer.skeletonPixelThicknessControls["3d"],
+            ...checkboxLayerControl(
+              (layer: SegmentationUserLayer) =>
+                layer.displayState.skeletonRenderingOptions.params3d.mode
+                  .shaded,
+            ),
+          },
+        ] satisfies LayerControlDefinition<SegmentationUserLayer>[])
+      : []),
     {
-      label: `Skeleton mode (${viewName})`,
-      toolJson: `${json_keys.SKELETON_RENDERING_JSON_KEY}.mode${viewName}`,
+      label: `Enlarge skeleton nodes (${viewName})`,
+      title: "Make nodes stand out by drawing them wider than the edges",
+      toolJson: `${json_keys.SKELETON_RENDERING_JSON_KEY}.enlargeNodes${viewName}`,
       isValid: (layer) => layer.skeletonPixelThicknessControls[viewName],
-      ...enumLayerControl<SegmentationUserLayer, SkeletonRenderMode>(
-        (layer) =>
-          layer.displayState.skeletonRenderingOptions[
-            `params${viewName}` as const
-          ].mode,
+      ...checkboxLayerControl(
+        (layer: SegmentationUserLayer) =>
+          layer.displayState.skeletonRenderingOptions[`params${viewName}`].mode
+            .enlargeNodes,
       ),
     },
     {

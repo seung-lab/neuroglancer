@@ -885,20 +885,67 @@ void emitDefault() {
 }
 
 export class TrackableSkeletonRenderMode2d extends TrackableEnum<SkeletonRenderMode2d> {
+  readonly enlargeNodes: WatchableValueInterface<boolean>;
+
   constructor(
     value: SkeletonRenderMode2d,
     defaultValue: SkeletonRenderMode2d = value,
   ) {
     super(SkeletonRenderMode2d, value, defaultValue);
+    const mode = this;
+    this.enlargeNodes = {
+      changed: mode.changed,
+      get value() {
+        return hasEnlargedNodes(mode.value);
+      },
+      set value(enabled) {
+        mode.value = enabled
+          ? SkeletonRenderMode2d.LINES_AND_POINTS
+          : SkeletonRenderMode2d.LINES;
+      },
+    };
   }
 }
 
 export class TrackableSkeletonRenderMode3d extends TrackableEnum<SkeletonRenderMode3d> {
+  readonly shaded = this.makeToggle(isRaycastMode, hasEnlargedNodes, true);
+  readonly enlargeNodes = this.makeToggle(
+    hasEnlargedNodes,
+    isRaycastMode,
+    false,
+  );
+
   constructor(
     value: SkeletonRenderMode3d,
     defaultValue: SkeletonRenderMode3d = value,
   ) {
     super(SkeletonRenderMode3d, value, defaultValue);
+  }
+
+  private makeToggle(
+    get: (mode: SkeletonRenderMode3d) => boolean,
+    getOther: (mode: SkeletonRenderMode3d) => boolean,
+    isShading: boolean,
+  ): WatchableValueInterface<boolean> {
+    const mode = this;
+    return {
+      changed: mode.changed,
+      get value() {
+        return get(mode.value);
+      },
+      set value(enabled) {
+        const other = getOther(mode.value);
+        const shaded = isShading ? enabled : other;
+        const enlarged = isShading ? other : enabled;
+        mode.value = shaded
+          ? enlarged
+            ? SkeletonRenderMode3d.CYLINDERS_AND_BALLS
+            : SkeletonRenderMode3d.CYLINDERS
+          : enlarged
+            ? SkeletonRenderMode3d.LINES_AND_POINTS
+            : SkeletonRenderMode3d.LINES;
+      },
+    };
   }
 }
 
@@ -929,14 +976,14 @@ export class SkeletonRenderingOptions implements Trackable {
   shaderControlState = new ShaderControlState(this.shader);
   codeVisible = new TrackableBoolean(true);
   hideInactiveShaderControls = new TrackableBoolean(false);
-  params2d: ViewSpecificSkeletonRenderingOptions<SkeletonRenderMode2d> = {
+  params2d = {
     mode: new TrackableSkeletonRenderMode2d(
       SkeletonRenderMode2d.LINES_AND_POINTS,
     ),
     lineWidth: new TrackableSkeletonLineWidth(2),
     useRadiusAttribute: new TrackableBoolean(false),
   };
-  params3d: ViewSpecificSkeletonRenderingOptions<SkeletonRenderMode3d> = {
+  params3d = {
     mode: new TrackableSkeletonRenderMode3d(SkeletonRenderMode3d.LINES),
     lineWidth: new TrackableSkeletonLineWidth(1),
     useRadiusAttribute: new TrackableBoolean(false),
