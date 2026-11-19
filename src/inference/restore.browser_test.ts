@@ -347,9 +347,14 @@ describe("inference recipe datasource restoration", () => {
     },
   );
 
-  it.each([undefined, 0, 2])(
-    "restores input scale %s before verifying spacing and constructing live geometry",
-    async (inputScaleIndex) => {
+  it.each([
+    [undefined, 1],
+    [0, undefined],
+    [2, 0],
+    [2, 1],
+  ] as const)(
+    "restores scale %s and channel %s before checking spacing and constructing live geometry",
+    async (inputScaleIndex, inputChannel) => {
       const f = await fixture();
       // Both native scales must fit the legacy model's full context patch.
       f.input.shapeZYX.splice(0, 3, 80, 320, 400);
@@ -364,7 +369,12 @@ describe("inference recipe datasource restoration", () => {
       const selected = inputScaleIndex === 2 ? coarse : f.input;
       const recipe: InferenceRecipe = {
         ...f.recipe,
+        source: {
+          name: "multichannel",
+          source: "zarr://https://example.com/image",
+        },
         ...(inputScaleIndex === undefined ? {} : { inputScaleIndex }),
+        ...(inputChannel === undefined ? {} : { inputChannel }),
         spacingZYX: [...selected.spacingZYX] as [number, number, number],
       };
       const saved = JSON.stringify(recipe);
@@ -375,6 +385,7 @@ describe("inference recipe datasource restoration", () => {
       expect(prepareInferenceInput).toHaveBeenCalledExactlyOnceWith(
         f.image,
         inputScaleIndex ?? 0,
+        inputChannel ?? 0,
       );
       expect(LiveInference).toHaveBeenCalledWith(
         f.controller,
@@ -396,6 +407,25 @@ describe("inference recipe datasource restoration", () => {
     },
   );
 
+  it("propagates an out-of-range channel from input preparation without fetching or publishing", async () => {
+    const f = await fixture();
+    f.recipe.inputChannel = 1; // No second channel on the legacy scalar source.
+    vi.mocked(prepareInferenceInput).mockImplementationOnce(() => {
+      throw new Error("Input channel out of range");
+    });
+    await expect(restoreInferenceRecipe(f.options, f.recipe)).rejects.toThrow(
+      "Input channel out of range",
+    );
+    expect(prepareInferenceInput).toHaveBeenCalledExactlyOnceWith(
+      f.image,
+      0,
+      1,
+    );
+    expect(f.fetchModel).not.toHaveBeenCalled();
+    expect(f.rpc.promiseInvoke).not.toHaveBeenCalled();
+    expect(f.hidden.wasDisposed).toBe(true);
+  });
+
   it("rejects even a tiny spacing mismatch at the selected coarse scale before downloading", async () => {
     const f = await fixture();
     f.recipe.inputScaleIndex = 2;
@@ -405,7 +435,11 @@ describe("inference recipe datasource restoration", () => {
     await expect(restoreInferenceRecipe(f.options, f.recipe)).rejects.toThrow(
       "native input voxel size changed",
     );
-    expect(prepareInferenceInput).toHaveBeenCalledExactlyOnceWith(f.image, 2);
+    expect(prepareInferenceInput).toHaveBeenCalledExactlyOnceWith(
+      f.image,
+      2,
+      0,
+    );
     expect(f.fetchModel).not.toHaveBeenCalled();
     expect(LiveInference).not.toHaveBeenCalled();
     expect(f.input.dispose).toHaveBeenCalledOnce();
@@ -489,6 +523,7 @@ describe("inference recipe datasource restoration", () => {
       expect(f.controller.run).toHaveBeenCalledExactlyOnceWith(
         f.input,
         expect.objectContaining({ overlap: overlap ?? true }),
+        expect.any(Function),
       );
       const runOptions = f.controller.run.mock.calls[0][1];
       expect(runOptions).not.toHaveProperty("scale");
@@ -509,6 +544,11 @@ describe("inference recipe datasource restoration", () => {
       state,
     });
     expect(data.canonicalUrl).toBe(INFERENCE_RECIPE_URL);
+    expect(prepareInferenceInput).toHaveBeenCalledExactlyOnceWith(
+      f.image,
+      0,
+      0,
+    );
     expect(makeLayer).toHaveBeenCalledWith(f.root, f.recipe.source.name, {
       type: "image",
       source: state.source.source,

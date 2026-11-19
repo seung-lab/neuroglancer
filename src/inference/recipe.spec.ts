@@ -232,20 +232,28 @@ describe("parseInferenceRecipe", () => {
   );
 
   it.each([recipe, dynamicRecipe])(
-    "round-trips input scale indices without inserting a default into legacy JSON (%#)",
+    "round-trips input scale and channel indices without inserting defaults into legacy JSON (%#)",
     (makeRecipe) => {
       const original = makeRecipe();
       const before = JSON.stringify(original);
       const legacy = parseInferenceRecipe(JSON.parse(before));
       expect(legacy).not.toHaveProperty("inputScaleIndex");
-      expect(legacy).toEqual(original);
-      for (const inputScaleIndex of [0, 2, Number.MAX_SAFE_INTEGER]) {
-        const value = { ...original, inputScaleIndex };
-        const parsed = parseInferenceRecipe(JSON.parse(JSON.stringify(value)));
-        expect(parsed).toEqual(value);
-        expect(
-          parseInferenceRecipe(JSON.parse(JSON.stringify(parsed))),
-        ).toEqual(value);
+      expect(legacy).not.toHaveProperty("inputChannel");
+      expect(legacy).toStrictEqual(original);
+      for (const selection of [
+        { inputScaleIndex: 0 },
+        { inputScaleIndex: 2 },
+        { inputScaleIndex: Number.MAX_SAFE_INTEGER },
+        { inputChannel: 0 },
+        { inputChannel: Number.MAX_SAFE_INTEGER },
+        { inputScaleIndex: 2, inputChannel: 1 },
+      ]) {
+        const value = { ...original, ...selection };
+        const parsed = parseInferenceRecipe(value);
+        const saved = JSON.stringify(parsed);
+        const replay = parseInferenceRecipe(JSON.parse(saved));
+        expect(replay).toStrictEqual(value);
+        expect(JSON.stringify(replay)).toBe(saved);
       }
       expect(JSON.stringify(original)).toBe(before);
     },
@@ -267,11 +275,13 @@ describe("parseInferenceRecipe", () => {
     Infinity,
     -Infinity,
     Number.MAX_SAFE_INTEGER + 1,
-  ])("rejects a present invalid input scale index: %j", (inputScaleIndex) => {
+  ])("rejects a present invalid input scale or channel index: %j", (index) => {
     for (const value of [recipe(), dynamicRecipe()]) {
-      expect(() => parseInferenceRecipe({ ...value, inputScaleIndex })).toThrow(
-        "Invalid inference recipe inputScaleIndex: expected a nonnegative safe integer",
-      );
+      for (const key of ["inputScaleIndex", "inputChannel"]) {
+        expect(() => parseInferenceRecipe({ ...value, [key]: index })).toThrow(
+          `Invalid inference recipe ${key}: expected a nonnegative safe integer`,
+        );
+      }
     }
   });
 

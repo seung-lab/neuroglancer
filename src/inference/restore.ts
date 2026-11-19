@@ -242,14 +242,19 @@ export async function restoreInferenceRecipe(
   chunkManager.registerDisposer(dispose);
   try {
     // Do not insert into root: this source is independent of visible layers,
-    // names, session selection and inference dialog settings.
+    // names, session selection and inference dialog settings. Local axes such
+    // as c' are bound from the loaded source's output dimensions.
     hidden = makeLayer(root, recipe.source.name, {
       type: "image",
       source: recipe.source.source,
     });
     const image = await waitForSource(hidden, signal);
     signal.throwIfAborted();
-    input = prepareInferenceInput(image, recipe.inputScaleIndex ?? 0);
+    input = prepareInferenceInput(
+      image,
+      recipe.inputScaleIndex ?? 0,
+      recipe.inputChannel ?? 0,
+    );
     input.assertValid();
     if (recipe.spacingZYX.some((x, i) => x !== input!.spacingZYX[i])) {
       throw new Error(

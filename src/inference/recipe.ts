@@ -49,6 +49,8 @@ interface InferenceRecipeCommon {
   overlap?: boolean;
   /** Native input scale index; absent retains the finest scale (0). */
   inputScaleIndex?: number;
+  /** Zero-based native input channel; absent selects channel 0 on replay. */
+  inputChannel?: number;
   mode: "live";
   spacingZYX: [number, number, number];
 }
@@ -281,6 +283,7 @@ export function parseInferenceRecipe(value: unknown): InferenceRecipe {
     "compatibilityFixes",
     "overlap",
     "inputScaleIndex",
+    "inputChannel",
     "mode",
     "spacingZYX",
     "outputSpacingZYX",
@@ -338,14 +341,12 @@ export function parseInferenceRecipe(value: unknown): InferenceRecipe {
     if (typeof obj.overlap !== "boolean") invalid("overlap", "a boolean");
     result.overlap = obj.overlap;
   }
-  if ("inputScaleIndex" in obj) {
-    if (
-      typeof obj.inputScaleIndex !== "number" ||
-      !Number.isSafeInteger(obj.inputScaleIndex) ||
-      obj.inputScaleIndex < 0
-    )
-      invalid("inputScaleIndex", "a nonnegative safe integer");
-    result.inputScaleIndex = obj.inputScaleIndex;
+  for (const key of ["inputScaleIndex", "inputChannel"] as const) {
+    if (!(key in obj)) continue;
+    const index = obj[key];
+    if (typeof index !== "number" || !Number.isSafeInteger(index) || index < 0)
+      invalid(key, "a nonnegative safe integer");
+    result[key] = index;
   }
   return result;
 }
