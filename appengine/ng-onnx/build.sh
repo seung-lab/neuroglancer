@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
-# Builds ng-onnx assets only; never uploads or promotes traffic.
+# Builds ng-onnx or ng-seg assets with the same production runtime; never deploys.
 set -euo pipefail
+service=${1:-ng-onnx}
+case "$service" in
+  ng-onnx|ng-seg) ;;
+  *) echo "Usage: $0 [ng-onnx|ng-seg]" >&2; exit 2 ;;
+esac
 cd "$(dirname "$0")/../.."
 if [[ -n "$(git status --porcelain)" ]]; then
-  echo "ng-onnx builds require a clean working tree; commit changes first." >&2
+  echo "$service builds require a clean working tree; commit changes first." >&2
   exit 1
 fi
 export RUNTIME_BASE=https://storage.googleapis.com/flywire-frontend/bundle-onnx/ort-conv3d-82e7a1d722d0/
