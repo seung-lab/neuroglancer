@@ -156,6 +156,52 @@ describe("browser WASM watershed marching cubes", () => {
     },
   );
 
+  // Classic cube edges: four around the lower Z face, four around the
+  // upper Z face, then four joining the faces. At isovalue 0.5 all emitted
+  // vertices must be these edge midpoints in voxel-center coordinates.
+  const edgeMidpoints = [
+    [1, 0.5, 0.5],
+    [1.5, 1, 0.5],
+    [1, 1.5, 0.5],
+    [0.5, 1, 0.5],
+    [1, 0.5, 1.5],
+    [1.5, 1, 1.5],
+    [1, 1.5, 1.5],
+    [0.5, 1, 1.5],
+    [0.5, 0.5, 1],
+    [1.5, 0.5, 1],
+    [1.5, 1.5, 1],
+    [0.5, 1.5, 1],
+  ];
+  it.each([
+    { background: [0], edges: [0, 8, 3] },
+    // Ambiguous complementary cases 5 and 250 emit *different* counts.
+    { background: [0, 3], edges: [0, 8, 3, 1, 2, 10] },
+    {
+      background: [1, 2, 4, 5, 6, 7],
+      edges: [3, 8, 2, 8, 10, 2, 8, 1, 10, 8, 0, 1],
+    },
+    { background: [0, 1, 3], edges: [3, 2, 10, 3, 10, 8, 8, 10, 9] },
+    {
+      background: [0, 2, 3, 4, 5],
+      edges: [11, 10, 1, 11, 1, 7, 7, 1, 0, 7, 0, 9, 7, 9, 5],
+    },
+  ])(
+    "returns the complete single-cell mesh for background offsets $background",
+    async ({ background, edges }) => {
+      const mask = new Uint8Array(8).fill(255);
+      for (const offset of background) mask[offset] = 0;
+      const { vertexPositions, indices } = await extractWatershedMesh(
+        mask,
+        [2, 2, 2],
+      );
+      expect(vertexPositions).toEqual(
+        Float32Array.from(edges.flatMap((edge) => edgeMidpoints[edge])),
+      );
+      expect(indices).toEqual(Uint32Array.from(edges, (_, i) => i));
+    },
+  );
+
   it("leaves ROI boundaries open and removes a merged label's internal interface", async () => {
     const shape = [3, 2, 2];
     const left = await extractWatershedMesh(
@@ -213,6 +259,10 @@ describe("browser WASM watershed marching cubes", () => {
         "0 or 255",
       );
     }
+    // A region with no cells still has to contain valid mask bytes.
+    await expect(
+      extractWatershedMesh(new Uint8Array([0, 1]), [2, 1, 1]),
+    ).rejects.toThrow("0 or 255");
   });
 
   it("meshes a full 64 Mi-voxel mask with exact sparse-object geometry", async () => {
@@ -239,12 +289,55 @@ describe("browser WASM watershed marching cubes", () => {
     expect(recovered.vertexPositions).toEqual(saved);
   }, 60_000);
 
-  it("rejects high-complexity surfaces before extraction and recovers without truncation", async () => {
-    const mask = maskFrom([40, 40, 40], (x, y, z) => (x + y + z) % 2 === 0);
-    expect(mask.length).toBeLessThan(2 ** 21);
-    expect(5 * 39 ** 3).toBeGreaterThan(MAX_WATERSHED_MESH_TRIANGLES);
-    await expect(extractWatershedMesh(mask, [40, 40, 40])).rejects.toThrow(
-      "surface budget exceeded",
+  it("fits a plane above the former cap even when five triangles per mixed cell would exceed the new cap", async () => {
+    const shape = [513, 513, 2];
+    const mixedCells = 512 ** 2;
+    const triangles = 2 * mixedCells;
+    const { vertexPositions, indices } = await extractWatershedMesh(
+      maskFrom(shape, (_x, _y, z) => z === 1),
+      shape,
+    );
+    expect(triangles).toBeGreaterThan(2 ** 18);
+    expect(triangles).toBeLessThan(MAX_WATERSHED_MESH_TRIANGLES);
+    expect(5 * mixedCells).toBeGreaterThan(MAX_WATERSHED_MESH_TRIANGLES);
+    expect(vertexPositions.length).toBe(9 * triangles);
+    // Check even the vertices beyond the old limit, without allocating a
+    // second large buffer or running a matcher per triangle.
+    expect(
+      vertexPositions.every((value, i) =>
+        i % 3 === 2 ? value === 1 : value >= 0.5 && value <= 512.5,
+      ),
+    ).toBe(true);
+    expect(indices.length).toBe(3 * triangles);
+    expect(indices.every((value, i) => value === i)).toBe(true);
+  });
+
+  // Each of the 64³ checkerboard cells emits four triangles. Flipping
+  // the origin affects only its one adjacent cell (case 90 -> 91, four
+  // triangles -> five), giving an exact one-triangle change at the limit.
+  const shapeAtLimit = [65, 65, 65];
+  const checkerboardAtLimit = () =>
+    maskFrom(shapeAtLimit, (x, y, z) => (x + y + z) % 2 === 0);
+
+  it("returns the entire mesh at the inclusive surface cap", async () => {
+    const { vertexPositions, indices } = await extractWatershedMesh(
+      checkerboardAtLimit(),
+      shapeAtLimit,
+    );
+    expect(4 * 64 ** 3).toBe(MAX_WATERSHED_MESH_TRIANGLES);
+    expect(vertexPositions.length).toBe(9 * MAX_WATERSHED_MESH_TRIANGLES);
+    expect(indices.length).toBe(3 * MAX_WATERSHED_MESH_TRIANGLES);
+    expect(indices[indices.length - 1]).toBe(indices.length - 1);
+    expect(vertexPositions.byteLength + indices.byteLength).toBe(
+      MAX_WATERSHED_MESH_BYTES,
+    );
+  });
+
+  it("rejects one triangle over the cap with a visible remedy, then recovers", async () => {
+    const mask = checkerboardAtLimit();
+    mask[0] = 0;
+    await expect(extractWatershedMesh(mask, shapeAtLimit)).rejects.toThrow(
+      /surface budget exceeded.*1048576 triangles.*smaller region/i,
     );
     const recovered = await extractWatershedMesh(singleton(), [3, 3, 3]);
     expect(recovered.indices.length).toBe(24);

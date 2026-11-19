@@ -3,7 +3,9 @@
 include!(env!("MC_CORE_RS"));
 
 const MAX_VOXELS: usize = 1 << 26;
-const MAX_TRIANGLES: usize = 1 << 18;
+const MAX_TRIANGLES: usize = 1 << 20;
+const INVALID_INPUT: i32 = -1;
+const OVER_BUDGET: i32 = -2;
 
 #[no_mangle]
 pub extern "C" fn mc_alloc(bytes: usize) -> *mut u8 {
@@ -21,8 +23,58 @@ pub unsafe extern "C" fn mc_free(pointer: *mut u8, bytes: usize) {
     }
 }
 
-// Caller owns valid input/output allocations. No allocation occurs during extraction.
-// Returns the float count, or -1 for invalid input, -2 for insufficient output capacity.
+// Caller owns valid, non-overlapping allocations for each ABI call. Both passes
+// use the same corner bits, table prefix and traversal order; neither allocates.
+unsafe fn visit_surface(
+    mask: *const u8,
+    mask_length: usize,
+    x: usize,
+    y: usize,
+    z: usize,
+    mut visit: impl FnMut(usize, usize, usize, [u8; 8], &[i32]) -> Result<(), i32>,
+) -> Result<(), i32> {
+    let voxels = x.checked_mul(y).and_then(|n| n.checked_mul(z));
+    if voxels != Some(mask_length) || mask_length > MAX_VOXELS
+        || x < 2 || y < 2 || z < 2 || mask.is_null()
+    {
+        return Err(INVALID_INPUT);
+    }
+    let volume = std::slice::from_raw_parts(mask, mask_length);
+    if volume.iter().any(|&v| v != 0 && v != 255) {
+        return Err(INVALID_INPUT);
+    }
+    let offsets = INDEX_TO_VERTEX.map(|[dx, dy, dz]| (dz as usize * y + dy as usize) * x + dx as usize);
+    for k in 0..z - 1 {
+        for j in 0..y - 1 {
+            for i in 0..x - 1 {
+                let base = (k * y + j) * x + i;
+                let vals = offsets.map(|offset| volume[base + offset]);
+                if vals == [0; 8] || vals == [255; 8] {
+                    continue;
+                }
+                let mut index = 0;
+                for (v, &value) in vals.iter().enumerate() {
+                    index |= usize::from(value == 0) << v;
+                }
+                visit(i, j, k, vals, &TRI_TABLE[index][..CASE_EDGES[index] as usize])?;
+            }
+        }
+    }
+    Ok(())
+}
+
+// Returns an exact triangle count, -1 for invalid input, or -2 once over budget.
+#[no_mangle]
+pub unsafe extern "C" fn mc_count(mask: *const u8, mask_length: usize, x: usize, y: usize, z: usize) -> i32 {
+    let mut count = 0;
+    let result = visit_surface(mask, mask_length, x, y, z, |_, _, _, _, edges| {
+        count += edges.len() / 3;
+        if count > MAX_TRIANGLES { Err(OVER_BUDGET) } else { Ok(()) }
+    });
+    result.map_or_else(|status| status, |_| count as i32)
+}
+
+// Returns the float count, -1 for invalid input, or -2 for insufficient capacity.
 #[no_mangle]
 pub unsafe extern "C" fn mc_extract(
     mask: *const u8,
@@ -33,48 +85,27 @@ pub unsafe extern "C" fn mc_extract(
     output: *mut f32,
     output_floats: usize,
 ) -> i32 {
-    let voxels = x.checked_mul(y).and_then(|n| n.checked_mul(z));
-    if voxels != Some(mask_length) || mask_length > MAX_VOXELS
-        || x < 2 || y < 2 || z < 2 || mask.is_null() || output.is_null()
-        || output_floats > MAX_TRIANGLES * 9
-    {
-        return -1;
+    if output.is_null() || output_floats > MAX_TRIANGLES * 9 {
+        return INVALID_INPUT;
     }
-    let volume = std::slice::from_raw_parts(mask, mask_length);
-    if volume.iter().any(|&v| v != 0 && v != 255) {
-        return -1;
-    }
-    let triangles = std::slice::from_raw_parts_mut(output, output_floats);
+    let triangles = std::slice::from_raw_parts_mut(output.cast::<std::mem::MaybeUninit<f32>>(), output_floats);
     let mut written = 0;
-    let mut vals = [0.0; 8];
-    let mut vert = [0.0; 3];
-    for k in 0..z - 1 {
-        for j in 0..y - 1 {
-            for i in 0..x - 1 {
-                for (n, v) in INDEX_TO_VERTEX.iter().enumerate() {
-                    let voxel = ((k + v[2] as usize) * y + j + v[1] as usize) * x + i + v[0] as usize;
-                    vals[n] = volume[voxel] as f32 / 255.0;
-                }
-                let mut index = 0;
-                for v in 0..8 {
-                    if vals[v] <= 0.5 {
-                        index |= 1 << v;
-                    }
-                }
-                for t in TRI_TABLE[index].iter().take_while(|t| **t >= 0) {
-                    if written + 3 > output_floats {
-                        return -2;
-                    }
-                    let edge = EDGE_VERTICES[*t as usize];
-                    lerp_verts(&INDEX_TO_VERTEX[edge[0]], &INDEX_TO_VERTEX[edge[1]],
-                        vals[edge[0]], vals[edge[1]], 0.5, &mut vert);
-                    triangles[written] = vert[0] + i as f32 + 0.5;
-                    triangles[written + 1] = vert[1] + j as f32 + 0.5;
-                    triangles[written + 2] = vert[2] + k as f32 + 0.5;
-                    written += 3;
-                }
-            }
+    let result = visit_surface(mask, mask_length, x, y, z, |i, j, k, vals, edges| {
+        if written + edges.len() * 3 > output_floats {
+            return Err(OVER_BUDGET);
         }
-    }
-    written as i32
+        let vals = vals.map(|v| v as f32 / 255.0);
+        let mut vert = [0.0; 3];
+        for &t in edges {
+            let edge = EDGE_VERTICES[t as usize];
+            lerp_verts(&INDEX_TO_VERTEX[edge[0]], &INDEX_TO_VERTEX[edge[1]],
+                vals[edge[0]], vals[edge[1]], 0.5, &mut vert);
+            triangles[written].write(vert[0] + i as f32 + 0.5);
+            triangles[written + 1].write(vert[1] + j as f32 + 0.5);
+            triangles[written + 2].write(vert[2] + k as f32 + 0.5);
+            written += 3;
+        }
+        Ok(())
+    });
+    result.map_or_else(|status| status, |_| written as i32)
 }

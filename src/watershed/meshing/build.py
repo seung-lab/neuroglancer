@@ -17,7 +17,7 @@ if hashlib.sha256(source).hexdigest() != SOURCE_HASH:
     raise SystemExit("Pinned marching-cubes upstream source hash mismatch")
 text = source.decode()
 core = text[text.index("static TRI_TABLE:"):text.index("#[wasm_bindgen]\npub struct MarchingCubes")]
-# Enforce the assumption used by the browser's pre-allocation surface budget.
+# Count and extraction consume the same audited prefix of each classic case.
 table = ast.literal_eval(re.search(r"static TRI_TABLE:.*?= (\[.*?\]);", core, re.S).group(1))
 assert len(table) == 256
 for row in table:
@@ -25,6 +25,7 @@ for row in table:
     edges = row[:row.index(-1)]
     assert len(edges) % 3 == 0 and len(edges) <= 15
     assert all(0 <= edge < 12 for edge in edges)
+core += f"\nstatic CASE_EDGES: [u8; 256] = {[row.index(-1) for row in table]};\n"
 
 rustc = os.environ.get("RUSTC", "rustc")
 version = subprocess.check_output([rustc, "--version"], text=True).strip()

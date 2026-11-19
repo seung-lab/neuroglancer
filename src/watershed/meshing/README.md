@@ -28,17 +28,16 @@ identity, region placement, cancellation, generation checks, and cache eviction.
 - **No MC33/asymptotic decider or topology guarantee.** The pinned classic table
   has ambiguous configurations (e.g. complementary cases 5/250 emit 2/4
   triangles). Do not assume complement-symmetric or guaranteed manifold output.
-- Before loading WASM or allocating native buffers, count mixed cells. Each has
-  an upper bound of five triangles. Reject if `mixedCells * 5 > 2**18` triangles
-  (262,144),
-  equivalently more than 12,582,912 bytes of returned positions + indices.
-  This is deliberately conservative: a surface can be rejected even if its exact
-  triangle count would fit. Errors are visible; output is never truncated.
-- Native position output remains capped at 9,437,184 bytes, plus a mask of at
+- Before allocating output, count triangles using the same marching-cubes cases
+  as extraction. Up to **1,048,576 triangles** fit, including the limit
+  itself: 36 bytes of float32 positions and 12 bytes of uint32 indices per
+  triangle, or **48 MiB** of returned arrays. Over-budget meshes fail visibly;
+  they are never truncated.
+- Native position output is capped at 37,748,736 bytes, plus a mask of at
   most 67,108,864 bytes. `mc_alloc` accepts 1 through 67,108,864 bytes per
   allocation: the larger of the input-mask and native-output limits. Native
-  extraction allocates nothing and retains its `2**18`-triangle output-capacity
-  guard. The module has a 128 MiB (134,217,728-byte) linear-memory ceiling, enough
+  extraction allocates nothing and guards its output capacity. The module has
+  a 128 MiB (134,217,728-byte) linear-memory ceiling, enough
   for the mask, native output, and 1 MiB stack. The returned mesh byte budget
   is **not** a total process-memory budget: copied inputs, scratch/native output,
   JavaScript output, renderer normals/GPU buffers, and concurrent worker realms
@@ -72,6 +71,7 @@ no different extraction algorithm is substituted. There are no Cargo dependencie
 
 The build verifies the pinned source hash and audits all 256 rows: complete
 triples of edge indices 0..11 before the first -1, at most five triangles per row.
+It records each audited prefix length for both `mc_count` and `mc_extract`.
 Zeroes after the first -1 are padding, not extra triangles.
 
 SHA-256:
@@ -80,11 +80,11 @@ SHA-256:
 | --------------------- | ------------------------------------------------------------------ |
 | `upstream/lib.rs`     | `1a0a2756d60af44b9f0612cec881bdfc9da81065ba5ca8b9804324f1fbb06c2b` |
 | `upstream/LICENSE.md` | `c23c6b31737315fbe25de3e7f1936396f49cdd93fcb55d63e311b6b7ab0bc750` |
-| `native.rs`           | `fb39ff53b8769a50b9cb7a5c84587c102a278f1fcf63b7a1c4466bb686d1ae11` |
-| `marching_cubes.wasm` | `4c4f0593bd49b6446253f6d8faa589f235f1bf26e109bc32763e5763ecc19667` |
+| `native.rs`           | `24a38d01de3c446bdff47aaab714e56089bf23e6b4d75c5384047e1158f7d078` |
+| `marching_cubes.wasm` | `12e17c1cd47d25b51e8d442d21031bdd1547b92636fd57b18133674c460b0730` |
 
-The checked-in module is 80,636 bytes, has no imports, and exports `memory`,
-`mc_alloc`, `mc_free`, `mc_extract`, plus linker globals `__data_end`/`__heap_base`.
+The checked-in module is 83,222 bytes, has no imports, and exports `memory`,
+`mc_alloc`, `mc_free`, `mc_count`, `mc_extract`, plus linker globals `__data_end`/`__heap_base`.
 Its declared non-shared memory is initially 1,114,112 bytes (17 WASM pages), with
 an explicit maximum of 134,217,728 bytes (2,048 pages). Runtime growth to that
 maximum succeeds; growth by one additional page rejects.
@@ -107,8 +107,8 @@ RUST_LINKER="$SYSROOT/lib/rustlib/$HOST/bin/rust-lld" \
 sha256sum src/watershed/meshing/marching_cubes.wasm
 ```
 
-For this build, official compiler and target archives were extracted only under
-`/tmp/neuroglancer-meshing-rust`, without global installation:
+Alternatively, extract the official compiler and target archives under
+`/tmp/neuroglancer-meshing-rust` and build without a global installation:
 
 ```sh
 RUSTC=/tmp/neuroglancer-meshing-rust/rustc-1.93.1-x86_64-unknown-linux-gnu/rustc/bin/rustc \
@@ -145,7 +145,7 @@ npm test -- --workspace /tmp/watershed-input.workspace.mts --project browser \
 The browser tests exercise actual WASM geometry: singleton positions, outward
 winding, area and signed volume; planes on all three axes in a non-cubic region;
 merged interface removal and open boundaries; thin regions; byte/shape/voxel/surface
-validation; full 64 Mi-voxel (`[512, 512, 256]`) sparse-object extraction with exact
+validation (including the exact triangle cap and one triangle over); full 64 Mi-voxel (`[512, 512, 256]`) sparse-object extraction with exact
 translated octahedron geometry; concurrent initialization, owned inputs/outputs,
 and recovery after rejection. They do not claim renderer integration, global
 object completeness, or topology correctness on ambiguous configurations.

@@ -20,7 +20,7 @@ import {
 } from "#src/watershed/base.js";
 
 export const MAX_WATERSHED_MESH_VOXELS = MAX_WATERSHED_VOXELS;
-export const MAX_WATERSHED_MESH_TRIANGLES = 2 ** 18;
+export const MAX_WATERSHED_MESH_TRIANGLES = 2 ** 20;
 export const MAX_WATERSHED_MESH_BYTES =
   MAX_WATERSHED_MESH_TRIANGLES * 3 * (3 * 4 + 4);
 
@@ -28,6 +28,13 @@ interface MeshingExports {
   memory: WebAssembly.Memory;
   mc_alloc(bytes: number): number;
   mc_free(pointer: number, bytes: number): void;
+  mc_count(
+    mask: number,
+    maskLength: number,
+    x: number,
+    y: number,
+    z: number,
+  ): number;
   mc_extract(
     mask: number,
     maskLength: number,
@@ -78,56 +85,50 @@ export async function extractWatershedMesh(
       "Watershed meshing requires an X-fastest Uint8 mask matching XYZ shape",
     );
   // Own the validated bytes across the asynchronous module load.
-  const input = mask.slice();
-  for (const value of input) {
+  const input = new Uint8Array(mask);
+  const first = input[0];
+  let uniform = true;
+  for (let i = 0; i < voxels; ++i) {
+    const value = input[i];
     if (value !== 0 && value !== 255)
       throw new Error("Watershed meshing mask values must be 0 or 255");
+    if (value !== first) uniform = false;
   }
-  let mixedCells = 0;
-  const xy = x * y;
-  for (let k = 0; k < z - 1; ++k) {
-    for (let j = 0; j < y - 1; ++j) {
-      for (let i = 0; i < x - 1; ++i) {
-        const n = (k * y + j) * x + i;
-        const value = input[n];
-        if (
-          input[n + 1] === value &&
-          input[n + x] === value &&
-          input[n + x + 1] === value &&
-          input[n + xy] === value &&
-          input[n + xy + 1] === value &&
-          input[n + xy + x] === value &&
-          input[n + xy + x + 1] === value
-        )
-          continue;
-        // The pinned classic table emits at most five triangles per mixed cell.
-        if (++mixedCells * 5 > MAX_WATERSHED_MESH_TRIANGLES)
-          throw new Error(
-            `Watershed mesh surface budget exceeded (${MAX_WATERSHED_MESH_TRIANGLES} conservative triangles / ${MAX_WATERSHED_MESH_BYTES} output bytes); use a smaller region`,
-          );
-      }
-    }
-  }
-  if (mixedCells === 0)
+  if (uniform || x < 2 || y < 2 || z < 2)
     return {
       vertexPositions: new Float32Array(0),
       indices: new Uint32Array(0),
     };
 
-  const outputFloats = mixedCells * 5 * 9;
-  const outputBytes = outputFloats * Float32Array.BYTES_PER_ELEMENT;
   const wasm = await loadModule();
   // No awaits below: concurrent callers sharing this instance cannot interleave.
   let maskPointer = 0;
   let outputPointer = 0;
+  let outputBytes = 0;
   try {
     maskPointer = wasm.mc_alloc(voxels);
-    outputPointer = wasm.mc_alloc(outputBytes);
-    if (maskPointer === 0 || outputPointer === 0)
+    if (maskPointer === 0)
       throw new Error(
         "Watershed meshing WASM allocation failed; use a smaller region",
       );
     new Uint8Array(wasm.memory.buffer, maskPointer, voxels).set(input);
+    const triangles = wasm.mc_count(maskPointer, voxels, x, y, z);
+    if (triangles === -2 || triangles > MAX_WATERSHED_MESH_TRIANGLES)
+      throw new Error(
+        `Watershed mesh surface budget exceeded (limit: ${MAX_WATERSHED_MESH_TRIANGLES} triangles / ${MAX_WATERSHED_MESH_BYTES} output bytes); use a smaller region`,
+      );
+    // A nonuniform connected sample grid with cells has at least one triangle.
+    if (triangles <= 0)
+      throw new Error(
+        `Watershed meshing WASM count failed (status ${triangles})`,
+      );
+    const outputFloats = triangles * 9;
+    outputBytes = outputFloats * Float32Array.BYTES_PER_ELEMENT;
+    outputPointer = wasm.mc_alloc(outputBytes);
+    if (outputPointer === 0)
+      throw new Error(
+        "Watershed meshing WASM allocation failed; use a smaller region",
+      );
     const floats = wasm.mc_extract(
       maskPointer,
       voxels,
@@ -137,7 +138,7 @@ export async function extractWatershedMesh(
       outputPointer,
       outputFloats,
     );
-    if (floats < 0 || floats > outputFloats || floats % 9 !== 0)
+    if (floats !== outputFloats)
       throw new Error(`Watershed meshing WASM failed (status ${floats})`);
     // Copy before freeing/reusing native memory or allowing another extraction.
     const vertexPositions = new Float32Array(
