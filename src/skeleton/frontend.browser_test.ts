@@ -3,6 +3,7 @@ import { DisplayContext } from "#src/display_context.js";
 import { makeLayer } from "#src/layer/index.js";
 import type { SegmentationUserLayer } from "#src/layer/segmentation/index.js";
 import "#layer/segmentation";
+import { LAYER_CONTROLS } from "#src/layer/segmentation/layer_controls.js";
 import {
   PerspectiveViewSkeletonLayer,
   type SkeletonLayer,
@@ -15,7 +16,10 @@ import { RefCounted } from "#src/util/disposable.js";
 import { mat4 } from "#src/util/geom.js";
 import { NullarySignal } from "#src/util/signal.js";
 import { Viewer } from "#src/viewer.js";
-import { VisibilityPriorityAggregator } from "#src/visibility_priority/frontend.js";
+import {
+  VisibilityPriorityAggregator,
+  WatchableVisibilityPriority,
+} from "#src/visibility_priority/frontend.js";
 import { GLBuffer } from "#src/webgl/buffer.js";
 import { drawLines } from "#src/webgl/lines.js";
 import {
@@ -39,6 +43,78 @@ void emit(vec4 color, highp uint pickId) {
 }
 `);
 }
+
+it("preserves mixed saved settings until a shared skeleton control is edited", () => {
+  const resources = new RefCounted();
+  try {
+    const display = resources.registerDisposer(
+      new DisplayContext(document.createElement("div")),
+    );
+    const viewer = resources.registerDisposer(new Viewer(display));
+    const managedLayer = resources.registerDisposer(
+      makeLayer(viewer.layerSpecification, "test", { type: "segmentation" }),
+    );
+    const layer = managedLayer.layer as SegmentationUserLayer;
+    const availability = vi
+      .spyOn(layer.skeletonRadiusAvailability, "value", "get")
+      .mockReturnValue({ withRadius: true, withoutRadius: false });
+    resources.registerDisposer(() => availability.mockRestore());
+    const options = layer.displayState.skeletonRenderingOptions;
+    options.restoreState({
+      useRadiusAttribute3d: true,
+      mode3d: "cylinders",
+      lineWidth2d: 7,
+      lineWidth3d: 9,
+    });
+    const makeControl = (label: string) => {
+      const { controlElement } = LAYER_CONTROLS.find(
+        (x) => x.label === label,
+      )!.makeControl(layer, resources, {
+        display,
+        labelContainer: document.createElement("div"),
+        labelTextContainer: document.createElement("div"),
+        visibility: new WatchableVisibilityPriority(
+          WatchableVisibilityPriority.VISIBLE,
+        ),
+      });
+      document.body.append(controlElement);
+      resources.registerDisposer(() => controlElement.remove());
+      return controlElement;
+    };
+    const thickness = makeControl("Thickness").querySelector("select")!;
+    const enlarge = makeControl("Enlarge skeleton nodes");
+    expect(enlarge).toBeInstanceOf(HTMLInputElement);
+    if (!(enlarge instanceof HTMLInputElement)) return;
+    expect(thickness.selectedOptions[0].text).toBe("Mixed (radius in 3D)");
+    expect(enlarge.indeterminate).toBe(true);
+    expect(options.params2d.useRadiusAttribute.value).toBe(false);
+    expect(options.params3d.useRadiusAttribute.value).toBe(true);
+    expect(options.params3d.mode.enlargeNodes.value).toBe(false);
+
+    thickness.value = "attribute";
+    thickness.dispatchEvent(new Event("change"));
+    expect(options.params2d.useRadiusAttribute.value).toBe(true);
+    expect(options.params3d.useRadiusAttribute.value).toBe(true);
+    thickness.value = "pixels";
+    thickness.dispatchEvent(new Event("change"));
+    expect(options.params2d.useRadiusAttribute.value).toBe(false);
+    expect(options.params3d.useRadiusAttribute.value).toBe(false);
+
+    enlarge.click();
+    expect(enlarge.indeterminate).toBe(false);
+    expect(options.params2d.mode.enlargeNodes.value).toBe(true);
+    expect(options.toJSON().mode3d).toBe("cylinders_and_balls");
+    enlarge.click();
+    expect(options.toJSON()).toMatchObject({
+      mode2d: "lines",
+      mode3d: "cylinders",
+      lineWidth2d: 7,
+      lineWidth3d: 9,
+    });
+  } finally {
+    resources.dispose();
+  }
+});
 
 it("edits 2D node size without changing the saved mode format", () => {
   const resources = new RefCounted();

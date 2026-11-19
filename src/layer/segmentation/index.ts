@@ -1107,6 +1107,16 @@ export class SegmentationUserLayer extends Base {
     ),
   };
 
+  readonly showSkeletonNodeSizeControl = this.registerDisposer(
+    makeCachedDerivedWatchableValue(
+      (in2d, in3d) => in2d || in3d,
+      [
+        this.skeletonPixelThicknessControls["2d"],
+        this.skeletonPixelThicknessControls["3d"],
+      ],
+    ),
+  );
+
   readonly getSkeletonLayer = () => {
     for (const layer of this.renderLayers) {
       if (layer instanceof PerspectiveViewSkeletonLayer) {

@@ -28,13 +28,15 @@ stored-model units. Its values must be finite and nonnegative. The skeleton
 transform applies to both the vertex positions and the radius geometry.
 
 On the segmentation layer's **Render** tab, set **Thickness** to
-**From radius attribute** independently for 2D and 3D.
+**From radius attribute** to use stored radii in both 2D and 3D.
 The 2D view shows the slice's intersection with the tapered edges and spherical
 nodes; the 3D view shows their surfaces. **Fixed pixels** preserves the line
 width and skeleton mode settings.
 For 3D fixed-pixel rendering, **Shade skeleton** switches from flat lines
-and points to lit cylinders and spheres. In either fixed-pixel view,
-**Enlarge skeleton nodes** makes nodes wider than the edges.
+and points to lit cylinders and spheres. **Enlarge skeleton nodes** makes
+nodes wider than the edges in both fixed-pixel views. Line widths are still
+set separately for 2D and 3D. A saved state with different values in the two
+views keeps those values until you change the shared control.
 
 .. _precomputed-skeleton-format-encoding:
 
