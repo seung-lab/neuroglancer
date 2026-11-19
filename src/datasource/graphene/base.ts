@@ -60,6 +60,9 @@ export class MeshSourceParameters {
   lod: number;
   sharding: Array<ShardingParameters> | undefined;
   nBitsForLayerId: number;
+  // The dir under `fragmentUrl` a sharded source reads a v1 answer's
+  // unsharded fragments from.
+  dynamicMeshDir: string;
 
   static RPC_ID = "graphene/MeshSource";
 }
