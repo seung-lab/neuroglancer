@@ -70,7 +70,7 @@ async function loadModule(): Promise<MeshingExports> {
   return modulePromise;
 }
 
-/** Extracts open-ROI, voxel-local triangle soup in an async-computation worker. */
+/** Extracts voxel-local triangle soup capped at the mask boundary. */
 export async function extractWatershedMesh(
   mask: Uint8Array,
   shapeXYZ: readonly number[],
@@ -86,15 +86,14 @@ export async function extractWatershedMesh(
     );
   // Own the validated bytes across the asynchronous module load.
   const input = new Uint8Array(mask);
-  const first = input[0];
-  let uniform = true;
+  let hasForeground = false;
   for (let i = 0; i < voxels; ++i) {
     const value = input[i];
     if (value !== 0 && value !== 255)
       throw new Error("Watershed meshing mask values must be 0 or 255");
-    if (value !== first) uniform = false;
+    if (value === 255) hasForeground = true;
   }
-  if (uniform || x < 2 || y < 2 || z < 2)
+  if (!hasForeground)
     return {
       vertexPositions: new Float32Array(0),
       indices: new Uint32Array(0),
@@ -117,7 +116,7 @@ export async function extractWatershedMesh(
       throw new Error(
         `Watershed mesh surface budget exceeded (limit: ${MAX_WATERSHED_MESH_TRIANGLES} triangles / ${MAX_WATERSHED_MESH_BYTES} output bytes); use a smaller region`,
       );
-    // A nonuniform connected sample grid with cells has at least one triangle.
+    // Any foreground sample has a surface when the exterior is background.
     if (triangles <= 0)
       throw new Error(
         `Watershed meshing WASM count failed (status ${triangles})`,

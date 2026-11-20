@@ -17,10 +17,12 @@ identity, region placement, cancellation, generation checks, and cache eviction.
   upstream `+0.5` voxel-center offset on **each** axis. There is no region origin,
   physical spacing, or datasource offset applied here. The caller must place
   the regional result using the volume's coordinate convention exactly once.
-- **Open partial ROI:** only cells between supplied samples are extracted.
-  No zero padding, caps, or invented outside samples. Uniform masks and regions
-  with any dimension below 2 return empty arrays. A foreground-filled ROI can
-  therefore have no surface; that does not imply a complete object is absent.
+- **Capped partial ROI:** also extract the one-cell shell outside the supplied
+  samples, treating out-of-bounds samples as background without allocating a
+  padded mask. Caps lie at the voxel faces, with marching-cubes bevels where
+  surfaces meet. Interior samples and geometry are unchanged. All-background
+  masks return empty arrays; all-foreground masks and thin regions can produce
+  a surface.
 - Classic table-based marching cubes, with outward winding from foreground 255
   toward background 0. No smoothing, simplification, vertex welding, or normals.
   Sequential indices describe triangle soup; the existing mesh backend computes
@@ -65,7 +67,8 @@ function verbatim. `native.rs` adapts the extraction loop to a small standalone
 ABI with explicit caller-owned allocations; removes wasm-bindgen/js-sys, the
 retained `MarchingCubes` object and growing `Vec`; fixes the isovalue to 0.5;
 validates dimensions/mask bytes; and checks caller output capacity. It preserves
-traversal order, interpolation, table order/winding, and the `+0.5` offset.
+interior traversal order, interpolation, table order/winding, and the `+0.5`
+offset. It visits the outer boundary cells after the interior traversal.
 The discarded upstream code only supplies bindings, logging and state management;
 no different extraction algorithm is substituted. There are no Cargo dependencies.
 
@@ -80,10 +83,10 @@ SHA-256:
 | --------------------- | ------------------------------------------------------------------ |
 | `upstream/lib.rs`     | `1a0a2756d60af44b9f0612cec881bdfc9da81065ba5ca8b9804324f1fbb06c2b` |
 | `upstream/LICENSE.md` | `c23c6b31737315fbe25de3e7f1936396f49cdd93fcb55d63e311b6b7ab0bc750` |
-| `native.rs`           | `24a38d01de3c446bdff47aaab714e56089bf23e6b4d75c5384047e1158f7d078` |
-| `marching_cubes.wasm` | `12e17c1cd47d25b51e8d442d21031bdd1547b92636fd57b18133674c460b0730` |
+| `native.rs`           | `b4fe40a6c9b0e5994dded20777a5278991f0e5925a379e2017d9556c533cf2a7` |
+| `marching_cubes.wasm` | `7dbe6866f0ee08d1c9b0fe1b726e1880ff4c95833bd8dc53307b7eb5f2b371a0` |
 
-The checked-in module is 83,222 bytes, has no imports, and exports `memory`,
+The checked-in module is 88,256 bytes, has no imports, and exports `memory`,
 `mc_alloc`, `mc_free`, `mc_count`, `mc_extract`, plus linker globals `__data_end`/`__heap_base`.
 Its declared non-shared memory is initially 1,114,112 bytes (17 WASM pages), with
 an explicit maximum of 134,217,728 bytes (2,048 pages). Runtime growth to that
@@ -144,8 +147,9 @@ npm test -- --workspace /tmp/watershed-input.workspace.mts --project browser \
 
 The browser tests exercise actual WASM geometry: singleton positions, outward
 winding, area and signed volume; planes on all three axes in a non-cubic region;
-merged interface removal and open boundaries; thin regions; byte/shape/voxel/surface
-validation (including the exact triangle cap and one triangle over); full 64 Mi-voxel (`[512, 512, 256]`) sparse-object extraction with exact
+capped boundaries, preserved cavities, and thin regions; byte/shape/voxel/surface
+validation (including the exact triangle cap and overflow from boundary triangles);
+full 64 Mi-voxel (`[512, 512, 256]`) sparse-object extraction with exact
 translated octahedron geometry; concurrent initialization, owned inputs/outputs,
 and recovery after rejection. They do not claim renderer integration, global
 object completeness, or topology correctness on ambiguous configurations.

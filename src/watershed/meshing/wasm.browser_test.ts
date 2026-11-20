@@ -45,6 +45,23 @@ function normal(v: Float32Array, i: number): number[] {
   ];
 }
 
+function expectClosed(v: Float32Array) {
+  expect(v.length).toBeGreaterThan(0);
+  // WASM returns triangle soup; match shared edges by coordinates, not index.
+  const edges = new Map<string, number>();
+  for (let i = 0; i < v.length; i += 9) {
+    const vertices = [0, 3, 6].map((j) =>
+      v.subarray(i + j, i + j + 3).join(","),
+    );
+    for (let j = 0; j < 3; ++j) {
+      const [a, b] = [vertices[j], vertices[(j + 1) % 3]].sort();
+      const key = `${a};${b}`;
+      edges.set(key, (edges.get(key) ?? 0) + 1);
+    }
+  }
+  expect(new Set(edges.values())).toEqual(new Set([2]));
+}
+
 const singleton = () =>
   maskFrom([3, 3, 3], (x, y, z) => x === 1 && y === 1 && z === 1);
 
@@ -65,7 +82,7 @@ describe("browser WASM watershed marching cubes", () => {
     ]);
     expect(first.vertexPositions).toEqual(second.vertexPositions);
     expect(first.vertexPositions.length).toBe(8 * 9);
-    expect(third.indices.length).toBe(4 * 3);
+    expectClosed(third.vertexPositions);
     expect(first.vertexPositions.buffer).not.toBe(
       second.vertexPositions.buffer,
     );
@@ -76,7 +93,7 @@ describe("browser WASM watershed marching cubes", () => {
       maskFrom([38, 38, 38], (x, y, z) => (x + y + z) % 2 === 0),
       [38, 38, 38],
     );
-    expect(large.indices.length / 3).toBe(4 * 37 ** 3);
+    expect(large.indices.length / 3).toBeGreaterThan(4 * 37 ** 3);
     expect(
       large.vertexPositions.byteLength + large.indices.byteLength,
     ).toBeLessThanOrEqual(MAX_WATERSHED_MESH_BYTES);
@@ -129,24 +146,15 @@ describe("browser WASM watershed marching cubes", () => {
       const threshold = axis === 0 ? 2 : 1;
       const input = maskFrom(shape, (x, y, z) => [x, y, z][axis] >= threshold);
       const before = input.slice();
-      const { vertexPositions: v, indices } = await extractWatershedMesh(
-        input,
-        shape,
-      );
+      const { vertexPositions: v } = await extractWatershedMesh(input, shape);
       const expectedArea = shape.reduce(
         (area, size, a) => (a === axis ? area : area * (size - 1)),
         1,
       );
-      expect(indices.length / 3).toBe(2 * expectedArea);
+      expectClosed(v);
       let area = 0;
-      for (let i = 0; i < v.length; i += 3) {
-        expect(v[i + axis]).toBe(threshold);
-        for (let a = 0; a < 3; ++a) {
-          expect(v[i + a]).toBeGreaterThanOrEqual(0.5);
-          expect(v[i + a]).toBeLessThanOrEqual(shape[a] - 0.5);
-        }
-      }
       for (let i = 0; i < v.length; i += 9) {
+        if ([0, 3, 6].some((j) => v[i + j + axis] !== threshold)) continue;
         const n = normal(v, i);
         expect(n[axis]).toBeLessThan(0);
         area += Math.hypot(...n) / 2;
@@ -187,7 +195,7 @@ describe("browser WASM watershed marching cubes", () => {
       edges: [11, 10, 1, 11, 1, 7, 7, 1, 0, 7, 0, 9, 7, 9, 5],
     },
   ])(
-    "returns the complete single-cell mesh for background offsets $background",
+    "preserves the interior cell mesh for background offsets $background",
     async ({ background, edges }) => {
       const mask = new Uint8Array(8).fill(255);
       for (const offset of background) mask[offset] = 0;
@@ -195,46 +203,81 @@ describe("browser WASM watershed marching cubes", () => {
         mask,
         [2, 2, 2],
       );
-      expect(vertexPositions).toEqual(
+      expect(vertexPositions.subarray(0, 3 * edges.length)).toEqual(
         Float32Array.from(edges.flatMap((edge) => edgeMidpoints[edge])),
       );
-      expect(indices).toEqual(Uint32Array.from(edges, (_, i) => i));
+      expect(indices.subarray(0, edges.length)).toEqual(
+        Uint32Array.from(edges, (_, i) => i),
+      );
     },
   );
 
-  it("leaves ROI boundaries open and removes a merged label's internal interface", async () => {
-    const shape = [3, 2, 2];
-    const left = await extractWatershedMesh(
-      maskFrom(shape, (x) => x === 0),
+  it("closes a cut segment at the ROI boundary without changing the mask", async () => {
+    const shape = [5, 6, 7];
+    const mask = maskFrom(
+      shape,
+      (x, y, z) => x < 3 && y > 0 && y < 5 && z > 0 && z < 6,
+    );
+    const before = mask.slice();
+    const { vertexPositions: v } = await extractWatershedMesh(mask, shape);
+    expectClosed(v);
+    const cap = [];
+    for (let i = 0; i < v.length; i += 9) {
+      if (v[i] === 0 && v[i + 3] === 0 && v[i + 6] === 0)
+        cap.push(normal(v, i)[0]);
+    }
+    expect(cap).toHaveLength(2 * 3 * 4);
+    expect(cap.every((x) => x < 0)).toBe(true);
+    expect(mask).toEqual(before);
+  });
+
+  it("preserves an interior cavity when capping an ROI", async () => {
+    const shape = [5, 5, 5];
+    const { vertexPositions: solid } = await extractWatershedMesh(
+      new Uint8Array(125).fill(255),
       shape,
     );
-    const right = await extractWatershedMesh(
-      maskFrom(shape, (x) => x >= 1),
+    const { vertexPositions: hollow } = await extractWatershedMesh(
+      maskFrom(shape, (x, y, z) => x !== 2 || y !== 2 || z !== 2),
       shape,
     );
-    expect(left.indices.length).toBe(6);
-    expect(right.indices.length).toBe(6);
-    const merged = await extractWatershedMesh(
-      new Uint8Array(12).fill(255),
-      shape,
-    );
-    expect(merged.indices.length).toBe(0);
-    expect(merged.vertexPositions.length).toBe(0);
-    const background = await extractWatershedMesh(new Uint8Array(12), shape);
-    expect(background.indices.length).toBe(0);
+    expectClosed(solid);
+    expectClosed(hollow);
+    expect(hollow.length - solid.length).toBe(8 * 9);
+    const cavity = [];
+    for (let i = 0; i < hollow.length; i += 9) {
+      if (
+        hollow.subarray(i, i + 9).every((value) => value >= 2 && value <= 3)
+      ) {
+        cavity.push(hollow.subarray(i, i + 9));
+      }
+    }
+    expect(cavity).toHaveLength(8);
+  });
+
+  it("returns no triangles for an all-background region", async () => {
+    const result = await extractWatershedMesh(new Uint8Array(12), [3, 2, 2]);
+    expect(result.indices.length).toBe(0);
+    expect(result.vertexPositions.length).toBe(0);
   });
 
   it.each([
     [1, 3, 4],
     [4, 1, 3],
     [3, 4, 1],
-  ])("returns no triangles for a thin region %s", async (...shape) => {
-    const result = await extractWatershedMesh(
-      maskFrom(shape, (x, y, z) => (x + y + z) % 2 === 0),
+  ])("caps a region one voxel thick (%s × %s × %s)", async (...shape) => {
+    const axis = shape.indexOf(1);
+    const { vertexPositions: v, indices } = await extractWatershedMesh(
+      maskFrom(shape, (...xyz) =>
+        xyz.every((value, a) => value === (a === axis ? 0 : 1)),
+      ),
       shape,
     );
-    expect(result.indices.length).toBe(0);
-    expect(result.vertexPositions.length).toBe(0);
+    expectClosed(v);
+    expect(indices.length).toBe(24);
+    expect(new Set(v.filter((_, i) => i % 3 === axis))).toEqual(
+      new Set([0, 0.5, 1]),
+    );
   });
 
   it("rejects malformed shape, mask values/length, and excessive voxel counts", async () => {
@@ -259,7 +302,7 @@ describe("browser WASM watershed marching cubes", () => {
         "0 or 255",
       );
     }
-    // A region with no cells still has to contain valid mask bytes.
+    // Thin regions still have to contain valid mask bytes.
     await expect(
       extractWatershedMesh(new Uint8Array([0, 1]), [2, 1, 1]),
     ).rejects.toThrow("0 or 255");
@@ -289,42 +332,44 @@ describe("browser WASM watershed marching cubes", () => {
     expect(recovered.vertexPositions).toEqual(saved);
   }, 60_000);
 
-  it("fits a plane above the former cap even when five triangles per mixed cell would exceed the new cap", async () => {
-    const shape = [513, 513, 2];
-    const mixedCells = 512 ** 2;
-    const triangles = 2 * mixedCells;
+  it("fits large parallel planes even when five triangles per mixed cell would exceed the cap", async () => {
+    const shape = [401, 401, 2];
     const { vertexPositions, indices } = await extractWatershedMesh(
       maskFrom(shape, (_x, _y, z) => z === 1),
       shape,
     );
-    expect(triangles).toBeGreaterThan(2 ** 18);
-    expect(triangles).toBeLessThan(MAX_WATERSHED_MESH_TRIANGLES);
-    expect(5 * mixedCells).toBeGreaterThan(MAX_WATERSHED_MESH_TRIANGLES);
-    expect(vertexPositions.length).toBe(9 * triangles);
-    // Check even the vertices beyond the old limit, without allocating a
-    // second large buffer or running a matcher per triangle.
-    expect(
-      vertexPositions.every((value, i) =>
-        i % 3 === 2 ? value === 1 : value >= 0.5 && value <= 512.5,
-      ),
-    ).toBe(true);
-    expect(indices.length).toBe(3 * triangles);
+    const cellsPerPlane = 400 ** 2;
+    expect(5 * 2 * cellsPerPlane).toBeGreaterThan(MAX_WATERSHED_MESH_TRIANGLES);
+    let interior = 0;
+    let cap = 0;
+    for (let i = 2; i < vertexPositions.length; i += 9) {
+      const z = vertexPositions[i];
+      if (z !== vertexPositions[i + 3] || z !== vertexPositions[i + 6])
+        continue;
+      if (z === 1) ++interior;
+      if (z === 2) ++cap;
+    }
+    expect(interior).toBe(2 * cellsPerPlane);
+    expect(cap).toBe(2 * cellsPerPlane);
+    expect(indices.length).toBe(vertexPositions.length / 3);
     expect(indices.every((value, i) => value === i)).toBe(true);
   });
 
-  // Each of the 64³ checkerboard cells emits four triangles. Flipping
-  // the origin affects only its one adjacent cell (case 90 -> 91, four
-  // triangles -> five), giving an exact one-triangle change at the limit.
-  const shapeAtLimit = [65, 65, 65];
-  const checkerboardAtLimit = () =>
-    maskFrom(shapeAtLimit, (x, y, z) => (x + y + z) % 2 === 0);
+  // 64 × 64 × 32 isolated boundary samples and interior samples, each
+  // emitting eight triangles. Leave room for one more isolated sample.
+  const shapeAtLimit = [128, 128, 66];
+  const maskAtLimit = () =>
+    maskFrom(
+      shapeAtLimit,
+      (x, y, z) => x % 2 === 0 && y % 2 === 0 && z % 2 === 0 && z < 64,
+    );
 
   it("returns the entire mesh at the inclusive surface cap", async () => {
     const { vertexPositions, indices } = await extractWatershedMesh(
-      checkerboardAtLimit(),
+      maskAtLimit(),
       shapeAtLimit,
     );
-    expect(4 * 64 ** 3).toBe(MAX_WATERSHED_MESH_TRIANGLES);
+    expect(8 * 64 * 64 * 32).toBe(MAX_WATERSHED_MESH_TRIANGLES);
     expect(vertexPositions.length).toBe(9 * MAX_WATERSHED_MESH_TRIANGLES);
     expect(indices.length).toBe(3 * MAX_WATERSHED_MESH_TRIANGLES);
     expect(indices[indices.length - 1]).toBe(indices.length - 1);
@@ -333,9 +378,9 @@ describe("browser WASM watershed marching cubes", () => {
     );
   });
 
-  it("rejects one triangle over the cap with a visible remedy, then recovers", async () => {
-    const mask = checkerboardAtLimit();
-    mask[0] = 0;
+  it("counts boundary triangles against the cap, rejects overflow, then recovers", async () => {
+    const mask = maskAtLimit();
+    mask[64 * 128 * 128] = 255;
     await expect(extractWatershedMesh(mask, shapeAtLimit)).rejects.toThrow(
       /surface budget exceeded.*1048576 triangles.*smaller region/i,
     );

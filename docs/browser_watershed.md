@@ -150,12 +150,14 @@ Keep the volume subsource enabled and a relevant slice view visible, for example
 in the four-panel layout: the 3D camera frustum alone does not request a watershed
 region.
 
-Meshes cover only the retained completed region. They are **open at ROI
-boundaries**, with no zero padding or caps. A uniform foreground region has no
-internal surface and may produce an empty mesh. These partial meshes are not
-complete objects or whole-volume reconstructions. Extraction uses classic
-marching cubes, not voxel-face cubes, and does not guarantee manifold topology
-for ambiguous configurations.
+Meshes cover only the retained completed region. At its outer boundary, the
+mesher treats samples just outside the region as background, **capping cut
+segments** without changing labels or filling interior cavities. This also gives
+a uniform foreground region an outer surface. There are no caps on internal
+chunk or inference tile seams. These caps show where computation stopped, not
+where the actual object ends. Extraction uses classic marching cubes, not
+voxel-face cubes, and does not guarantee manifold topology for ambiguous
+configurations.
 
 Contained navigation and identical parameters keep the same labels, selections,
 and mesh caches. A new watershed region or changed watershed/agglomeration

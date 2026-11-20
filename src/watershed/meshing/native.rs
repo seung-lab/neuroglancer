@@ -31,11 +31,11 @@ unsafe fn visit_surface(
     x: usize,
     y: usize,
     z: usize,
-    mut visit: impl FnMut(usize, usize, usize, [u8; 8], &[i32]) -> Result<(), i32>,
+    mut visit: impl FnMut(i32, i32, i32, [u8; 8], &[i32]) -> Result<(), i32>,
 ) -> Result<(), i32> {
     let voxels = x.checked_mul(y).and_then(|n| n.checked_mul(z));
     if voxels != Some(mask_length) || mask_length > MAX_VOXELS
-        || x < 2 || y < 2 || z < 2 || mask.is_null()
+        || x == 0 || y == 0 || z == 0 || mask.is_null()
     {
         return Err(INVALID_INPUT);
     }
@@ -43,21 +43,55 @@ unsafe fn visit_surface(
     if volume.iter().any(|&v| v != 0 && v != 255) {
         return Err(INVALID_INPUT);
     }
+    let mut visit_cell = |i, j, k, vals: [u8; 8]| {
+        if vals == [0; 8] || vals == [255; 8] {
+            return Ok(());
+        }
+        let mut index = 0;
+        for (v, &value) in vals.iter().enumerate() {
+            index |= usize::from(value == 0) << v;
+        }
+        visit(i, j, k, vals, &TRI_TABLE[index][..CASE_EDGES[index] as usize])
+    };
+
     let offsets = INDEX_TO_VERTEX.map(|[dx, dy, dz]| (dz as usize * y + dy as usize) * x + dx as usize);
     for k in 0..z - 1 {
         for j in 0..y - 1 {
             for i in 0..x - 1 {
                 let base = (k * y + j) * x + i;
-                let vals = offsets.map(|offset| volume[base + offset]);
-                if vals == [0; 8] || vals == [255; 8] {
-                    continue;
-                }
-                let mut index = 0;
-                for (v, &value) in vals.iter().enumerate() {
-                    index |= usize::from(value == 0) << v;
-                }
-                visit(i, j, k, vals, &TRI_TABLE[index][..CASE_EDGES[index] as usize])?;
+                visit_cell(i as i32, j as i32, k as i32, offsets.map(|offset| volume[base + offset]))?;
             }
+        }
+    }
+
+    // Visit the one-cell shell without padding the mask or slowing interior
+    // sampling. Assign shared shell edges/corners to Z faces, then Y, then X.
+    let (x, y, z) = (x as i32, y as i32, z as i32);
+    let mut visit_boundary = |i: i32, j: i32, k: i32| {
+        let vals = INDEX_TO_VERTEX.map(|[dx, dy, dz]| {
+            let (sx, sy, sz) = (i + dx as i32, j + dy as i32, k + dz as i32);
+            if sx < 0 || sx >= x || sy < 0 || sy >= y || sz < 0 || sz >= z {
+                0
+            } else {
+                volume[((sz * y + sy) * x + sx) as usize]
+            }
+        });
+        visit_cell(i, j, k, vals)
+    };
+    for j in -1..y {
+        for i in -1..x {
+            visit_boundary(i, j, -1)?;
+            visit_boundary(i, j, z - 1)?;
+        }
+    }
+    for k in 0..z - 1 {
+        for i in -1..x {
+            visit_boundary(i, -1, k)?;
+            visit_boundary(i, y - 1, k)?;
+        }
+        for j in 0..y - 1 {
+            visit_boundary(-1, j, k)?;
+            visit_boundary(x - 1, j, k)?;
         }
     }
     Ok(())

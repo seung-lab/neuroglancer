@@ -330,8 +330,11 @@ async function awaitMesh(source: MeshSource, id = 1n) {
   );
 }
 
-/** The only surface is the actual 1/2 interface; the ROI exterior stays open. */
-function expectInternalPlane(fragments: FragmentChunk[], x = 2) {
+function expectCappedBounds(
+  fragments: FragmentChunk[],
+  lowerX: number,
+  upperX: number,
+) {
   const vertices = fragments.flatMap((chunk) => [
     ...chunk.meshData.vertexPositions,
   ]);
@@ -340,17 +343,24 @@ function expectInternalPlane(fragments: FragmentChunk[], x = 2) {
   const coordinates = [0, 1, 2].map((axis) =>
     vertices.filter((_, i) => i % 3 === axis),
   );
-  expect(new Set(coordinates[0])).toEqual(new Set([x]));
-  for (const axis of [1, 2]) {
-    expect(Math.min(...coordinates[axis])).toBe(0.5);
-    expect(Math.max(...coordinates[axis])).toBe(2.5);
-  }
+  expect(coordinates.map((axis) => Math.min(...axis))).toEqual([lowerX, 0, 0]);
+  expect(coordinates.map((axis) => Math.max(...axis))).toEqual([upperX, 3, 3]);
   for (const { meshData } of fragments) {
     expect(meshData.vertexPositions).toBeInstanceOf(Float32Array);
     expect(meshData.indices.length).toBeGreaterThan(0);
     expect(meshData.indices.length % 3).toBe(0);
     for (const index of meshData.indices)
       expect(index).toBeLessThan(meshData.vertexPositions.length / 3);
+  }
+  return coordinates;
+}
+
+function expectInternalPlane(fragments: FragmentChunk[], x = 2, lowerX = 0) {
+  const coordinates = expectCappedBounds(fragments, lowerX, x);
+  for (const axis of [1, 2]) {
+    const onPlane = coordinates[axis].filter((_, i) => coordinates[0][i] === x);
+    expect(Math.min(...onPlane)).toBe(0.5);
+    expect(Math.max(...onPlane)).toBe(2.5);
   }
 }
 
@@ -486,7 +496,7 @@ describe("selected live watershed meshes (real Viewer, Chrome and WASM)", () => 
     expect(snapshot.labels).toContain(2);
     out.group.visibleSegments.add(1n);
     const fragments = await awaitMesh(out.meshSource);
-    expectInternalPlane(fragments, 66);
+    expectInternalPlane(fragments, 66, snapshot.lowerXYZ[0]);
     expect(
       (offset[0] + fragments[0].meshData.vertexPositions[0]) * spacing[0],
     ).toBeCloseTo(7.6e-7, 14);
@@ -545,7 +555,7 @@ describe("selected live watershed meshes (real Viewer, Chrome and WASM)", () => 
     expect(jobs.snapshots).toHaveLength(snapshotCount);
     out.group.visibleSegments.add(1n);
     const expanded = await awaitMesh(out.meshSource);
-    expectInternalPlane(expanded, 66);
+    expectInternalPlane(expanded, 66, live.getCompletedSnapshot()!.lowerXYZ[0]);
     for (const fragment of expanded) expect(fragments).not.toContain(fragment);
     expect(jobs.snapshots).toHaveLength(snapshotCount + 1);
   }, 120_000);
@@ -749,15 +759,20 @@ describe("selected live watershed meshes (real Viewer, Chrome and WASM)", () => 
     // No visibility-off toggle: epoch reset made the old numeric ID pickable.
     out.group.visibleSegments.add(1n);
     const merged = await awaitMesh(out.meshSource);
-    // Agglomeration merges ALL final voxels into ID 1. An open, all-foreground
-    // ROI has no surface, rather than retaining the pre-agglomeration plane or
-    // inventing a closed box around the ROI. awaitMesh requires real resident
-    // fragments, preventing an empty/denied manifest from passing vacuously.
-    for (const fragment of merged) {
-      expect(old).not.toContain(fragment);
-      expect(fragment.meshData.vertexPositions).toHaveLength(0);
-      expect(fragment.meshData.indices).toHaveLength(0);
-    }
+    // Agglomeration leaves only the ROI exterior, not the old 1/2 interface.
+    const [x, y, z] = expectCappedBounds(merged, 0, 5);
+    expect(
+      x.every(
+        (value, i) =>
+          value === 0 ||
+          value === 5 ||
+          y[i] === 0 ||
+          y[i] === 3 ||
+          z[i] === 0 ||
+          z[i] === 3,
+      ),
+    ).toBe(true);
+    for (const fragment of merged) expect(old).not.toContain(fragment);
     expect(out.meshLayer.isReady()).toBe(true);
     expect(jobs.snapshots).toHaveLength(firstSnapshotCount + 1);
     expect(jobs.watershed).toHaveLength(2);
