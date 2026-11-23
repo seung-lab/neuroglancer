@@ -106,7 +106,6 @@ function send(request: InferenceWorkerRequest) {
 }
 
 async function load(
-  compatibilityFixes?: boolean,
   precision?: InferencePrecision,
   provider: InferenceProvider = "cpu",
 ) {
@@ -116,7 +115,6 @@ async function load(
     model: new ArrayBuffer(1),
     provider,
     ...(precision === undefined ? {} : { precision }),
-    ...(compatibilityFixes === undefined ? {} : { compatibilityFixes }),
   });
   expect(response.kind).toBe("loaded");
   if (response.kind !== "loaded") throw new Error("Expected loaded");
@@ -152,11 +150,13 @@ function rawOutput(model = metadata) {
 }
 
 describe("worker native runtime configuration", () => {
-  it("uses a matching version-pinned CDN Asyncify JS/WASM pair for GPU and CPU", () => {
+  it("uses the packaged native Asyncify pair by default", () => {
     expect(mocks.env.wasm).toEqual({
       wasmPaths: {
-        mjs: "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.31.1/dist/ort-wasm-simd-threaded.asyncify.mjs",
-        wasm: "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.31.1/dist/ort-wasm-simd-threaded.asyncify.wasm",
+        mjs: expect.stringMatching(/\/ort-wasm-simd-threaded\.asyncify\.mjs$/),
+        wasm: expect.stringMatching(
+          /\/ort-wasm-simd-threaded\.asyncify\.wasm$/,
+        ),
       },
       numThreads: 1,
       proxy: false,
@@ -197,7 +197,7 @@ describe("worker native runtime configuration", () => {
         });
         expect(mocks.env.webgpu).toEqual({});
         expect(mocks.create).not.toHaveBeenCalled();
-        expect(await load(undefined, undefined, provider)).toMatchObject({
+        expect(await load(undefined, provider)).toMatchObject({
           requestedProvider: provider,
           actualProvider: provider === "cpu" ? "wasm" : "webgpu",
           threads: 1,
@@ -270,7 +270,7 @@ describe("worker subgroup matrix detection", () => {
           enabled ? ["chromium-experimental-subgroup-matrix"] : [],
         ),
       });
-      expect(await load(false, undefined, "webgpu")).toMatchObject({
+      expect(await load(undefined, "webgpu")).toMatchObject({
         actualProvider: "webgpu",
         webgpuSubgroupMatrix: enabled,
       });
@@ -305,7 +305,7 @@ describe("worker precision plumbing", () => {
   });
 
   it("reports CPU FP16 requests as FP32 without loading the converter", async () => {
-    expect(await load(undefined, "float16")).toMatchObject({
+    expect(await load("float16")).toMatchObject({
       requestedPrecision: "float16",
       actualPrecision: "float32",
       precisionFallbackReason: "FP16 is GPU-only; CPU uses FP32",
@@ -324,7 +324,7 @@ describe("worker precision plumbing", () => {
           }),
         },
       });
-      const loaded = await load(false, "float16", "webgpu");
+      const loaded = await load("float16", "webgpu");
       expect(loaded).toMatchObject({
         requestedPrecision: "float16",
         actualPrecision: supported ? "float16" : "float32",
@@ -347,7 +347,7 @@ describe("worker precision plumbing", () => {
           requestAdapter: async () => ({ features: new Set(["shader-f16"]) }),
         },
       });
-      await load(false, "float16", "webgpu");
+      await load("float16", "webgpu");
       const raw = rawOutput();
       if (kind === "shape") raw.dims = [1];
       else raw.data[0] = Infinity;
@@ -462,26 +462,6 @@ describe("worker fixed-batch tensor contract", () => {
 });
 
 describe("worker dynamic tensor contract", () => {
-  it.each([undefined, false, true])(
-    "forwards compatibility policy %s and returns analysis on CPU without rewriting",
-    async (compatibilityFixes) => {
-      const loaded = await load(compatibilityFixes);
-      expect(loaded.compatibilityFixes).toBe(compatibilityFixes);
-      expect(Object.hasOwn(loaded, "compatibilityFixes")).toBe(
-        compatibilityFixes !== undefined,
-      );
-      expect(loaded.compatibilityAnalysis).toMatchObject({
-        status: "unverified",
-      });
-      expect(loaded.preparation).toBeUndefined();
-      const raw = rawOutput();
-      mocks.run.mockResolvedValue({ [metadata.outputNames[0]]: raw });
-      const response = await run();
-      expect(response).toMatchObject({ kind: "output", metadata: loaded });
-      expect(mocks.create).toHaveBeenCalledTimes(1);
-    },
-  );
-
   it("feeds metadata names/shapes and crops a one-channel supersampled output", async () => {
     const loaded = await load();
     const raw = rawOutput();

@@ -18,10 +18,6 @@
 
 import type * as ort from "onnxruntime-web/webgpu";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type {
-  InferenceCompatibilityAnalysis,
-  ModelMetadata,
-} from "#src/inference/model.js";
 import {
   ProviderSession,
   requireWebGpu,
@@ -58,28 +54,7 @@ function setup() {
         : gpu.session,
   );
   const check = vi.fn(async (): Promise<unknown> => undefined);
-  const analysis: InferenceCompatibilityAnalysis = {
-    status: "available",
-    model: "model6280000",
-    fixes: ["Verified GPU graph rewrite"],
-    message: "Verified compatibility fixes are available.",
-  };
-  const inspect = vi.fn(async () => analysis);
-  const prepare = vi.fn(
-    async (model: ArrayBuffer, _enabled: boolean | undefined) => ({
-      model,
-      preparation: undefined as ModelMetadata["preparation"],
-      compatibilityAnalysis: analysis,
-    }),
-  );
-  const policy = new ProviderSession(
-    create,
-    1,
-    check,
-    prepare,
-    inspect,
-    convert,
-  );
+  const policy = new ProviderSession(create, 1, check, convert);
   const model = new ArrayBuffer(1);
   return {
     gpu,
@@ -89,9 +64,6 @@ function setup() {
     convert,
     create,
     check,
-    prepare,
-    inspect,
-    analysis,
     policy,
     model,
   };
@@ -182,9 +154,7 @@ describe("symbolic batch specialization", () => {
     const { policy, model, create, check, fp16, gpu, cpu } =
       setupSymbolicBatch();
     check.mockResolvedValue({ features: new Set(["shader-f16"]) });
-    expect(
-      await policy.load(model, "auto", undefined, "float16"),
-    ).toMatchObject({
+    expect(await policy.load(model, "auto", "float16")).toMatchObject({
       actualPrecision: "float16",
     });
     fp16.fake.run.mockRejectedValue(new Error("FP16 execution failed"));
@@ -265,9 +235,7 @@ describe("experimental native FP16 policy", () => {
     async (precision) => {
       const { policy, model, convert, check, create } = setup();
       check.mockResolvedValue(adapter);
-      expect(
-        await policy.load(model, "webgpu", undefined, precision),
-      ).toMatchObject({
+      expect(await policy.load(model, "webgpu", precision)).toMatchObject({
         requestedPrecision: "float32",
         actualPrecision: "float32",
         actualProvider: "webgpu",
@@ -284,16 +252,9 @@ describe("experimental native FP16 policy", () => {
     vi.stubGlobal("navigator", {
       gpu: { requestAdapter: async () => ({ features: { has } }) },
     });
-    const { create, prepare, inspect, convert, model } = setup();
-    const policy = new ProviderSession(
-      create,
-      1,
-      requireWebGpu,
-      prepare,
-      inspect,
-      convert,
-    );
-    expect(await policy.load(model, "webgpu", true, "float16")).toMatchObject({
+    const { create, convert, model } = setup();
+    const policy = new ProviderSession(create, 1, requireWebGpu, convert);
+    expect(await policy.load(model, "webgpu", "float16")).toMatchObject({
       requestedPrecision: "float16",
       actualPrecision: "float32",
       actualProvider: "webgpu",
@@ -304,8 +265,8 @@ describe("experimental native FP16 policy", () => {
   });
 
   it("CPU ignores FP16 visibly without detection or conversion", async () => {
-    const { policy, model, check, convert, prepare } = setup();
-    expect(await policy.load(model, "cpu", true, "float16")).toMatchObject({
+    const { policy, model, check, convert } = setup();
+    expect(await policy.load(model, "cpu", "float16")).toMatchObject({
       requestedPrecision: "float16",
       actualPrecision: "float32",
       actualProvider: "wasm",
@@ -313,32 +274,20 @@ describe("experimental native FP16 policy", () => {
     });
     expect(check).not.toHaveBeenCalled();
     expect(convert).not.toHaveBeenCalled();
-    expect(prepare).not.toHaveBeenCalled();
   });
 
   it.each(["auto", "webgpu"] as const)(
     "%s runs native FP16 from original bytes, without building FP32 too",
     async (provider) => {
-      const {
-        policy,
-        model,
-        check,
-        convert,
-        create,
-        fp16Model,
-        fp16,
-        prepare,
-      } = setup();
+      const { policy, model, check, convert, create, fp16Model, fp16 } =
+        setup();
       check.mockResolvedValue(adapter);
-      expect(await policy.load(model, provider, true, "float16")).toMatchObject(
-        {
-          requestedPrecision: "float16",
-          actualPrecision: "float16",
-          actualProvider: "webgpu",
-        },
-      );
+      expect(await policy.load(model, provider, "float16")).toMatchObject({
+        requestedPrecision: "float16",
+        actualPrecision: "float16",
+        actualProvider: "webgpu",
+      });
       expect(convert).toHaveBeenCalledExactlyOnceWith(model);
-      expect(prepare).not.toHaveBeenCalled();
       expect(create).toHaveBeenCalledExactlyOnceWith(
         fp16Model,
         WEBGPU_SESSION_OPTIONS,
@@ -352,8 +301,7 @@ describe("experimental native FP16 policy", () => {
   it.each(["conversion", "create", "run"])(
     "falls back visibly to FP32 GPU on FP16 %s, even with strict GPU",
     async (phase) => {
-      const { policy, model, check, convert, create, fp16, gpu, prepare } =
-        setup();
+      const { policy, model, check, convert, create, fp16, gpu } = setup();
       check.mockResolvedValue(adapter);
       if (phase === "conversion")
         convert.mockRejectedValue(
@@ -365,7 +313,7 @@ describe("experimental native FP16 policy", () => {
         create.mockRejectedValueOnce(new Error("Native FP16 create failed"));
       if (phase === "run")
         fp16.fake.run.mockRejectedValue(new Error("Native FP16 run failed"));
-      await policy.load(model, "webgpu", true, "float16");
+      await policy.load(model, "webgpu", "float16");
       await policy.run({});
       expect(policy.metadata).toMatchObject({
         requestedProvider: "webgpu",
@@ -383,7 +331,7 @@ describe("experimental native FP16 policy", () => {
           "FP16 preparation failed: existing Cast nodes are unsupported",
         );
       expect(gpu.fake.run).toHaveBeenCalledTimes(1);
-      expect(prepare).toHaveBeenCalledExactlyOnceWith(model, true);
+      expect(create.mock.lastCall?.[0]).toBe(model);
       expect(
         create.mock.calls.every(
           ([, options]) => options === WEBGPU_SESSION_OPTIONS,
@@ -399,7 +347,7 @@ describe("experimental native FP16 policy", () => {
       check.mockResolvedValue(adapter);
       fp16.fake.run.mockRejectedValue(new Error("FP16 execution"));
       gpu.fake.run.mockRejectedValue(new Error("FP32 execution"));
-      await policy.load(model, provider, false, "float16");
+      await policy.load(model, provider, "float16");
       if (provider === "webgpu") {
         await expect(policy.run({})).rejects.toThrow(
           "WebGPU execution failed: FP32 execution",
@@ -421,31 +369,30 @@ describe("experimental native FP16 policy", () => {
   );
 
   it("does not retry later native FP16 execution failures", async () => {
-    const { policy, model, check, fp16, create, prepare } = setup();
+    const { policy, model, check, fp16, create } = setup();
     check.mockResolvedValue(adapter);
-    await policy.load(model, "auto", true, "float16");
+    await policy.load(model, "auto", "float16");
     await policy.run({});
     fp16.fake.run.mockRejectedValue(new Error("later failure"));
     await expect(policy.run({})).rejects.toThrow(
       "WebGPU execution failed: later failure",
     );
     expect(create).toHaveBeenCalledTimes(1);
-    expect(prepare).not.toHaveBeenCalled();
   });
 
   it.each(["profile", "output"])(
     "does not precision-retry invalid native FP16 %s",
     async (phase) => {
-      const { policy, model, check, fp16, create, prepare } = setup();
+      const { policy, model, check, fp16, create } = setup();
       check.mockResolvedValue(adapter);
       if (phase === "profile") {
         fp16.fake.outputMetadata[0].type = "float16";
-        await expect(
-          policy.load(model, "auto", true, "float16"),
-        ).rejects.toThrow("float32 tensors");
+        await expect(policy.load(model, "auto", "float16")).rejects.toThrow(
+          "float32 tensors",
+        );
         expect(fp16.fake.release).toHaveBeenCalledTimes(1);
       } else {
-        await policy.load(model, "auto", true, "float16");
+        await policy.load(model, "auto", "float16");
         const invalid = {
           output: { data: new Float32Array([NaN]), dims: [1] },
         };
@@ -453,26 +400,21 @@ describe("experimental native FP16 policy", () => {
         expect(await policy.run({})).toBe(invalid);
       }
       expect(create).toHaveBeenCalledTimes(1);
-      expect(prepare).not.toHaveBeenCalled();
     },
   );
 });
 
 describe("inference provider policy", () => {
   it("CPU bypasses GPU detection and never retries failures", async () => {
-    const { policy, cpu, model, check, create, prepare, inspect, analysis } =
-      setup();
-    const metadata = await policy.load(model, "cpu", true);
+    const { policy, cpu, model, check, create } = setup();
+    const metadata = await policy.load(model, "cpu");
     expect(metadata).toMatchObject({
       requestedProvider: "cpu",
       actualProvider: "wasm",
-      compatibilityFixes: true,
-      compatibilityAnalysis: analysis,
     });
-    expect(inspect).toHaveBeenCalledExactlyOnceWith(model);
     expect(metadata.fallbackReason).toBeUndefined();
     expect(check).not.toHaveBeenCalled();
-    expect(prepare).not.toHaveBeenCalled();
+    expect(create.mock.lastCall?.[0]).toBe(model);
     expect(create).toHaveBeenCalledWith(model, {
       executionProviders: ["wasm"],
     });
@@ -490,6 +432,7 @@ describe("inference provider policy", () => {
         actualProvider: "webgpu",
       });
       expect(check).toHaveBeenCalledTimes(1);
+      expect(create.mock.lastCall?.[0]).toBe(model);
       expect(create).toHaveBeenCalledWith(model, WEBGPU_SESSION_OPTIONS);
       expect(WEBGPU_SESSION_OPTIONS).toEqual({
         executionProviders: [{ name: "webgpu", preferredLayout: "NCHW" }],
@@ -528,154 +471,6 @@ describe("inference provider policy", () => {
     },
   );
 
-  it("prepares only GPU bytes, preserves the original for Auto CPU retry, and clears preparation metadata", async () => {
-    const { policy, model, gpu, create, prepare, inspect, analysis } = setup();
-    const prepared = new ArrayBuffer(2);
-    prepare.mockResolvedValue({
-      model: prepared,
-      preparation: "model6280000-jsep",
-      compatibilityAnalysis: analysis,
-    });
-    expect(await policy.load(model, "auto", true)).toMatchObject({
-      actualProvider: "webgpu",
-      preparation: "model6280000-jsep",
-      compatibilityFixes: true,
-      compatibilityAnalysis: analysis,
-    });
-    expect(prepare).toHaveBeenCalledExactlyOnceWith(model, true);
-    expect(inspect).not.toHaveBeenCalled();
-    expect(create).toHaveBeenCalledWith(prepared, WEBGPU_SESSION_OPTIONS);
-    gpu.fake.run.mockRejectedValue(new Error("device lost"));
-    await policy.run({});
-    expect(create).toHaveBeenLastCalledWith(model, {
-      executionProviders: ["wasm"],
-    });
-    expect(policy.metadata).toMatchObject({
-      actualProvider: "wasm",
-      compatibilityFixes: true,
-      compatibilityAnalysis: analysis,
-    });
-    expect(prepare).toHaveBeenCalledTimes(1);
-    expect(inspect).not.toHaveBeenCalled();
-    expect(policy.metadata?.preparation).toBeUndefined();
-  });
-
-  it("uses original CPU bytes when GPU session creation rejects prepared bytes", async () => {
-    const { policy, model, create, prepare, analysis } = setup();
-    const prepared = new ArrayBuffer(2);
-    prepare.mockResolvedValue({
-      model: prepared,
-      preparation: "nooverseg-jsep",
-      compatibilityAnalysis: analysis,
-    });
-    create.mockRejectedValueOnce(new Error("GPU graph rejected"));
-    expect(await policy.load(model, "auto", true)).toMatchObject({
-      actualProvider: "wasm",
-      fallbackReason: "WebGPU initialization failed: GPU graph rejected",
-      compatibilityFixes: true,
-      compatibilityAnalysis: analysis,
-    });
-    expect(create).toHaveBeenNthCalledWith(1, prepared, WEBGPU_SESSION_OPTIONS);
-    expect(create).toHaveBeenNthCalledWith(2, model, {
-      executionProviders: ["wasm"],
-    });
-    expect(policy.metadata?.preparation).toBeUndefined();
-  });
-
-  it.each(["auto", "webgpu"] as const)(
-    "fails closed on preparation errors for %s without provider retry",
-    async (requested) => {
-      const { policy, model, create, prepare } = setup();
-      prepare.mockRejectedValue(new Error("Preparation validation failed"));
-      await expect(policy.load(model, requested, true)).rejects.toThrow(
-        "Preparation validation failed",
-      );
-      expect(create).not.toHaveBeenCalled();
-      expect(policy.metadata).toBeUndefined();
-    },
-  );
-
-  it.each(["auto", "webgpu"] as const)(
-    "%s uses prepared bytes only when fixes are requested, and disabled loads inspect only",
-    async (requested) => {
-      const { policy, model, create, prepare, inspect, analysis } = setup();
-      const prepared = new ArrayBuffer(2);
-      prepare.mockResolvedValue({
-        model: prepared,
-        preparation: "model6280000-jsep",
-        compatibilityAnalysis: analysis,
-      });
-      await policy.load(model, requested, true);
-      expect(create).toHaveBeenLastCalledWith(prepared, WEBGPU_SESSION_OPTIONS);
-      expect(prepare).toHaveBeenCalledExactlyOnceWith(model, true);
-      expect(inspect).not.toHaveBeenCalled();
-      expect(await policy.load(model, requested, false)).toMatchObject({
-        actualProvider: "webgpu",
-        compatibilityFixes: false,
-        compatibilityAnalysis: analysis,
-      });
-      expect(create).toHaveBeenLastCalledWith(model, WEBGPU_SESSION_OPTIONS);
-      expect(policy.metadata?.preparation).toBeUndefined();
-      expect(prepare).toHaveBeenCalledTimes(1);
-      expect(inspect).toHaveBeenCalledExactlyOnceWith(model);
-    },
-  );
-
-  it("passes the absent legacy policy through without recording an explicit opt-in", async () => {
-    const { policy, model, prepare } = setup();
-    await policy.load(model, "webgpu");
-    expect(prepare).toHaveBeenCalledExactlyOnceWith(model, undefined);
-    expect(policy.metadata).not.toHaveProperty("compatibilityFixes");
-  });
-
-  it("analyzes Auto adapter fallback without preparing CPU bytes", async () => {
-    const { policy, model, check, create, prepare, inspect, analysis } =
-      setup();
-    check.mockRejectedValue(new Error("No adapter"));
-    expect(await policy.load(model, "auto", true)).toMatchObject({
-      actualProvider: "wasm",
-      compatibilityFixes: true,
-      compatibilityAnalysis: analysis,
-      fallbackReason: "WebGPU initialization failed: No adapter",
-    });
-    expect(inspect).toHaveBeenCalledExactlyOnceWith(model);
-    expect(prepare).not.toHaveBeenCalled();
-    expect(create).toHaveBeenCalledExactlyOnceWith(model, {
-      executionProviders: ["wasm"],
-    });
-  });
-
-  it.each(["cpu", "auto", "webgpu"] as const)(
-    "fails visibly on inspection errors for %s",
-    async (requested) => {
-      const { policy, model, inspect, create } = setup();
-      inspect.mockRejectedValue(new Error("Analysis failed"));
-      await expect(policy.load(model, requested, false)).rejects.toThrow(
-        "Analysis failed",
-      );
-      expect(create).not.toHaveBeenCalled();
-      expect(policy.metadata).toBeUndefined();
-    },
-  );
-
-  it.each([false, true, undefined])(
-    "leaves unverified models untouched with requested fixes %s",
-    async (enabled) => {
-      const { create, check, model } = setup();
-      // Real inspection/preparation: malformed, unknown bytes must not be rewritten.
-      const policy = new ProviderSession(create, 1, check);
-      expect(await policy.load(model, "webgpu", enabled)).toMatchObject({
-        actualProvider: "webgpu",
-        compatibilityAnalysis: { status: "unverified" },
-      });
-      expect(policy.metadata?.preparation).toBeUndefined();
-      expect(create).toHaveBeenCalledExactlyOnceWith(
-        model,
-        WEBGPU_SESSION_OPTIONS,
-      );
-    },
-  );
-
   it("Auto retries a first GPU execution failure with CPU and updates metadata", async () => {
     const { policy, model, gpu, cpu, create } = setup();
     await policy.load(model, "auto");
@@ -683,6 +478,10 @@ describe("inference provider policy", () => {
     expect(await policy.run({})).toEqual({ output: "sentinel" });
     expect(gpu.fake.release).toHaveBeenCalledTimes(1);
     expect(cpu.fake.run).toHaveBeenCalledTimes(1);
+    expect(create.mock.calls.map(([bytes]) => bytes === model)).toEqual([
+      true,
+      true,
+    ]);
     expect(create).toHaveBeenLastCalledWith(model, {
       executionProviders: ["wasm"],
     });

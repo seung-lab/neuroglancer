@@ -25,7 +25,7 @@
  *   node tests/inference/precision_production.mjs
  *
  * RUNTIME_MANIFEST optionally verifies a custom native Asyncify pair from the app
- * origin or an explicit HTTPS base (CORS *), instead of the pinned CDN pair,
+ * origin or an explicit HTTPS base (CORS *), instead of the bundled pair,
  * including browser-observed WASM Brotli headers.
  * Bodies are decoded: encodedSha256 requires separate raw-network verification.
  *
@@ -41,8 +41,7 @@
  *   node tests/inference/precision_production.mjs
  * HARDWARE=1 additionally requires a real shader-f16 adapter (no silent skip),
  * checks unverified-model FP16 on WebGPU, and, with MODEL, compares the
- * original known model6280000 CPU FP32 / native GPU FP32 / native GPU FP16,
- * plus padding-only compatibility fixes on native GPU FP32.
+ * original known model6280000 CPU FP32 / native GPU FP32 / native GPU FP16.
  *
  * After coordinating GPU use, on the NVIDIA host:
  *   HEADFUL=1 HARDWARE=1 CHROME=/usr/bin/google-chrome \
@@ -65,8 +64,8 @@
  * thread metadata or output shapes. BASE_URL must match the requested isolation.
  * No source imports, session stubs, converted model fixtures or app changes.
  * Only model/source HTTP fixtures are fulfilled by Playwright; production JS
- * and workers come from the actual app, native Asyncify assets from pinned CDN
- * URLs (or the explicit custom runtime manifest). No production resource is
+ * and workers come from the actual app, native Asyncify assets from the bundle
+ * (or the explicit custom runtime manifest). No production resource is
  * intercepted.
  * BASE_URL needs to be a secure context and expose window.viewer like /app/.
  * Numerical deltas are observations, NOT segmentation-equivalence assertions.
@@ -101,17 +100,15 @@ assert(
 const runtimeManifest = process.env.RUNTIME_MANIFEST
   ? JSON.parse(await fs.readFile(process.env.RUNTIME_MANIFEST, "utf8"))
   : undefined;
-// By default, verify the exact, unmodified native ORT 1.31.1 pair on jsDelivr.
+// By default, verify the same-origin native ORT 1.31.1 package assets.
 const nativeWasmHash =
   "ca319e9539cd0f1e291cf56074760121eaf39650f5dbf84b6e52c07f4b2944ec";
 const nativeRuntimeAssets = {
   mjs: {
-    url: "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.31.1/dist/ort-wasm-simd-threaded.asyncify.mjs",
     bytes: 53457,
     sha256: "59cf781530e1a16df2a291d78798e3ec1152467edaec402d6f9599d85047c302",
   },
   wasm: {
-    url: "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.31.1/dist/ort-wasm-simd-threaded.asyncify.wasm",
     bytes: 28747738,
     sha256: nativeWasmHash,
   },
@@ -669,7 +666,7 @@ try {
             p.loads.push({
               provider: data.provider,
               precision: data.precision,
-              compatibilityFixes: data.compatibilityFixes,
+              hasCompatibilityFixes: "compatibilityFixes" in data,
               bytes: data.model.byteLength,
             });
           }
@@ -756,11 +753,8 @@ try {
     assert.equal(metadata.actualPrecision, c.actualPrecision || "float32");
     assert.deepEqual(metadata.inputShape, [1, 1, 16, 128, 128]);
     assert.deepEqual(metadata.outputShape, [1, 1, 48, 128, 128]);
-    assert.equal(
-      metadata.preparation,
-      c.compatibilityFixes ? "model6280000-jsep" : undefined,
-      "Only the explicit padding-only case applies the historical recipe tag",
-    );
+    assert.equal("compatibilityFixes" in metadata, false);
+    assert.equal("preparation" in metadata, false);
     if (c.fp16 && c.actualPrecision !== "float16") {
       assert.equal(typeof metadata.precisionFallbackReason, "string");
       assert(
@@ -809,12 +803,6 @@ try {
       .getByLabel("Execution provider", { exact: true })
       .selectOption(c.provider);
     if (c.fp16) await fp16.check();
-    if (c.compatibilityFixes)
-      await page
-        .getByLabel("Apply legacy JSEP padding fixes", {
-          exact: true,
-        })
-        .check();
     await page.getByLabel("Model URL (.onnx)").fill(modelUrl(c.real));
     await page
       .getByRole("button", { name: "Load model URL", exact: true })
@@ -836,8 +824,8 @@ try {
         .getByLabel("Apply legacy JSEP padding fixes", {
           exact: true,
         })
-        .isChecked(),
-      c.compatibilityFixes ?? false,
+        .count(),
+      0,
     );
     const overlapToggle = page.getByLabel("Overlap and blend output patches", {
       exact: true,
@@ -958,7 +946,7 @@ try {
       p.loads[0].precision,
       c.legacy ? undefined : c.fp16 ? "float16" : "float32",
     );
-    assert.equal(p.loads[0].compatibilityFixes, c.compatibilityFixes ?? false);
+    assert.equal(p.loads[0].hasCompatibilityFixes, false);
     assert.equal(
       p.outputs.length,
       1,
@@ -1104,7 +1092,7 @@ try {
       "New recipes persist requested precision; legacy omission must survive replay",
     );
     assert.equal(recipe.provider, c.provider);
-    assert.equal(recipe.compatibilityFixes, c.compatibilityFixes ?? false);
+    assert.equal("compatibilityFixes" in recipe, false);
     assert.equal(recipe.overlap, false);
     assert.equal(recipe.mode, "live");
     assert.equal("roi" in recipe, false);
@@ -1144,19 +1132,30 @@ try {
         "Only the exact manifest runtime URLs may be fetched",
       );
     for (const [extension, expected] of Object.entries(nativeRuntimeAssets)) {
-      const observed = runtimeAssets.filter((a) => a.url === expected.url);
-      const expectedOrigin = new URL(expected.url).origin;
-      const sameOrigin = expectedOrigin === appUrl.origin;
+      const observed = runtimeAssets.filter((a) => {
+        if (expected.url) return a.url === expected.url;
+        const { origin, pathname } = new URL(a.url);
+        const filename = path.basename(pathname);
+        return (
+          origin === appUrl.origin &&
+          (extension === "mjs"
+            ? /^ort-wasm-simd-threaded\.asyncify\.[\da-f]+\.mjs$/.test(filename)
+            : /^(?:ort-wasm-simd-threaded\.asyncify\.)?[\da-f]+\.wasm$/.test(
+                filename,
+              ) && a.sha256 === expected.sha256)
+        );
+      });
+      const sameOrigin =
+        !expected.url || new URL(expected.url).origin === appUrl.origin;
       const verified = (a) =>
         a.status === 200 &&
         a.nativeAsyncify &&
         a.bytes === expected.bytes &&
         a.sha256 === expected.sha256 &&
+        a.requestedUrl === a.url &&
+        !a.redirectedFrom &&
         (runtimeManifest
-          ? a.requestedUrl === expected.url &&
-            !a.redirectedFrom &&
-            new URL(a.url).origin === expectedOrigin &&
-            (sameOrigin || a.accessControlAllowOrigin === "*") &&
+          ? (sameOrigin || a.accessControlAllowOrigin === "*") &&
             !a.inspectionError &&
             a.contentType?.split(";", 1)[0].trim().toLowerCase() ===
               expected.contentType &&
@@ -1173,16 +1172,15 @@ try {
             (expected.encodedBytes === undefined ||
               a.contentLength === undefined ||
               a.contentLength === expected.encodedBytes)
-          : a.accessControlAllowOrigin === "*" &&
-            (extension === "wasm"
-              ? a.contentType?.includes("application/wasm")
-              : /javascript|ecmascript/.test(a.contentType || "")));
+          : extension === "wasm"
+            ? a.contentType?.includes("application/wasm")
+            : /javascript|ecmascript/.test(a.contentType || ""));
       assert(
-        observed.length > 0 &&
+        new Set(observed.map((asset) => asset.url)).size === 1 &&
           (runtimeManifest
             ? observed.every(verified)
             : observed.some(verified)),
-        `${runtimeManifest ? "Manifest" : "Pinned"} native Asyncify ${extension} URL, status, CORS, MIME, inspected bytes and declared encoding must match; observed: ${JSON.stringify(runtimeAssets)}`,
+        `${runtimeManifest ? "Manifest" : "Bundled"} native Asyncify ${extension} URL, status, CORS, MIME, inspected bytes and declared encoding must match; observed: ${JSON.stringify(runtimeAssets)}`,
       );
     }
     assert(
@@ -1431,24 +1429,6 @@ try {
         fp32Comparison.retained.maxAbs <= 0.01 &&
           fp32Comparison.retained.meanAbs <= 0.001,
         `Native FP32 regression: ${JSON.stringify(fp32Comparison)}`,
-      );
-      const paddingOnly = await execute(gpuBrowser, {
-        name: "model6280000 padding-only compatibility fixes, native WebGPU FP32",
-        real: true,
-        provider: "webgpu",
-        actualProvider: "webgpu",
-        fp16: false,
-        compatibilityFixes: true,
-      });
-      const paddingComparison = compare(
-        "padding-only native WebGPU FP32 vs original CPU FP32",
-        cpu,
-        paddingOnly,
-      );
-      assert(
-        paddingComparison.retained.maxAbs <= 0.01 &&
-          paddingComparison.retained.meanAbs <= 0.001,
-        `Padding-only FP32 regression: ${JSON.stringify(paddingComparison)}`,
       );
       compare("native WebGPU FP16 vs original CPU FP32", cpu, fp16);
       compare("native WebGPU FP16 vs native WebGPU FP32", fp32, fp16);

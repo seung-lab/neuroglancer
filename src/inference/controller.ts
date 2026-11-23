@@ -102,13 +102,6 @@ export function matchesCanonicalExecution(
     (candidate.actualPrecision ?? "float32")
   )
     return false;
-  if ((canonical.preparation ?? "as-is") !== (candidate.preparation ?? "as-is"))
-    return false;
-  if (
-    Boolean(canonical.compatibilityFixes) !==
-    Boolean(candidate.compatibilityFixes)
-  )
-    return false;
   if (!sameArray(canonical.inputNames, candidate.inputNames)) return false;
   if (!sameArray(canonical.outputNames, candidate.outputNames)) return false;
   if (!sameArray(canonical.inputShape, candidate.inputShape)) return false;
@@ -163,7 +156,6 @@ export class OnnxInferenceController {
   private file: File | undefined;
   private metadata: ModelMetadata | undefined;
   private provider: InferenceProvider = "auto";
-  private compatibilityFixes: boolean | undefined;
   private precision: InferencePrecision | undefined;
   private warnedMissingSubgroupMatrix = false;
   private readonly patchCache = new Map<string, Float32Array>();
@@ -292,9 +284,6 @@ export class OnnxInferenceController {
           requestedProvider,
           actualProvider,
           fallbackReason,
-          preparation,
-          compatibilityFixes,
-          compatibilityAnalysis,
           requestedPrecision,
           actualPrecision,
           precisionFallbackReason,
@@ -303,9 +292,6 @@ export class OnnxInferenceController {
           requestedProvider,
           actualProvider,
           fallbackReason,
-          preparation,
-          compatibilityFixes,
-          compatibilityAnalysis,
           requestedPrecision,
           actualPrecision,
           precisionFallbackReason,
@@ -481,9 +467,6 @@ export class OnnxInferenceController {
                 model: copy,
                 provider: "webgpu",
                 precision: canonicalPrecision,
-                ...(this.compatibilityFixes === undefined
-                  ? {}
-                  : { compatibilityFixes: this.compatibilityFixes }),
               },
               [copy],
             );
@@ -764,9 +747,6 @@ export class OnnxInferenceController {
         model,
         provider: this.provider,
         ...(this.precision === undefined ? {} : { precision: this.precision }),
-        ...(this.compatibilityFixes === undefined
-          ? {}
-          : { compatibilityFixes: this.compatibilityFixes }),
       },
       [model],
     );
@@ -788,7 +768,6 @@ export class OnnxInferenceController {
   async loadModel(
     file: File,
     provider: InferenceProvider = "auto",
-    compatibilityFixes?: boolean,
     precision?: InferencePrecision,
   ): Promise<ModelMetadata> {
     if (this.active)
@@ -801,7 +780,6 @@ export class OnnxInferenceController {
     this.file = undefined;
     this.auxModelBytes = undefined;
     this.provider = provider;
-    this.compatibilityFixes = compatibilityFixes;
     this.precision = precision;
     const operation = (this.loadingOperation = {});
     try {
@@ -1519,20 +1497,6 @@ export class OnnxInferenceController {
           ...(this.metadata!.fallbackReason === undefined
             ? {}
             : { fallbackReason: this.metadata!.fallbackReason }),
-          ...(this.metadata!.preparation === undefined
-            ? {}
-            : { preparation: this.metadata!.preparation }),
-          ...(this.compatibilityFixes === undefined
-            ? {}
-            : { compatibilityFixes: this.compatibilityFixes }),
-          ...(this.metadata!.compatibilityAnalysis === undefined
-            ? {}
-            : {
-                compatibilityAnalysis: {
-                  ...this.metadata!.compatibilityAnalysis,
-                  fixes: [...this.metadata!.compatibilityAnalysis.fixes],
-                },
-              }),
           geometry: { ...geometry },
           blending: {
             method: overlap ? "wu" : "none",

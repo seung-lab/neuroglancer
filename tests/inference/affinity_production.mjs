@@ -229,7 +229,7 @@ const observeWindowWorkers = (deadline) => {
           workerUrl: this.workerUrl,
           provider: data.provider,
           precision: data.precision,
-          compatibilityFixes: data.compatibilityFixes,
+          hasCompatibilityFixes: "compatibilityFixes" in data,
           bytes: data.model.byteLength,
         });
       }
@@ -349,7 +349,7 @@ const watchWorkers = async (context, page, record) => {
           id: data.id,
           provider: data.provider,
           precision: data.precision,
-          compatibilityFixes: data.compatibilityFixes,
+          hasCompatibilityFixes: "compatibilityFixes" in data,
           bytes: data.model?.byteLength,
         });
       if (data?.kind === "run")
@@ -926,9 +926,11 @@ try {
     source: `${fixtureBase}source`,
   };
   let manifest;
-  let runtimeBase = new URL(
-    "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.31.1/dist/",
-  );
+  let runtimeBase;
+  const bundledSha256 = {
+    mjs: "59cf781530e1a16df2a291d78798e3ec1152467edaec402d6f9599d85047c302",
+    wasm: "ca319e9539cd0f1e291cf56074760121eaf39650f5dbf84b6e52c07f4b2944ec",
+  };
   if (process.env.RUNTIME_MANIFEST) {
     manifest = JSON.parse(
       await fs.readFile(process.env.RUNTIME_MANIFEST, "utf8"),
@@ -948,14 +950,16 @@ try {
     const name = `ort-wasm-simd-threaded.asyncify.${extension}`;
     const artifact = manifest?.artifacts.find((a) => a.name === name);
     if (manifest) assert(artifact, `Missing manifest artifact ${name}`);
+    if (!artifact) return { extension, sha256: bundledSha256[extension] };
     const url = new URL(name, runtimeBase).href;
-    if (artifact) assert.equal(new URL(artifact.path, appUrl).href, url);
+    assert.equal(new URL(artifact.path, appUrl).href, url);
     return { ...artifact, extension, url };
   });
   report.expectedRuntimeAssets = runtimeAssets.map(
-    ({ extension, url, contentType, contentEncoding }) => ({
+    ({ extension, url, sha256, contentType, contentEncoding }) => ({
       extension,
       url,
+      sha256,
       contentType,
       contentEncoding,
     }),
@@ -1134,9 +1138,9 @@ try {
         undefined,
         "Unexpected precision fallback",
       );
-    for (const key of ["fallbackReason", "preparation"])
-      assert.equal(metadata[key], undefined, `Unexpected ${key}`);
-    assert.equal(metadata.compatibilityFixes, false);
+    assert.equal(metadata.fallbackReason, undefined);
+    assert.equal("preparation" in metadata, false);
+    assert.equal("compatibilityFixes" in metadata, false);
     assert.deepEqual(metadata.inputNames, ["image"]);
     assert.deepEqual(metadata.outputNames, ["logits"]);
     assert.deepEqual(
@@ -1442,7 +1446,7 @@ try {
         id: p.loads[0].id,
         provider: "webgpu",
         precision,
-        compatibilityFixes: false,
+        hasCompatibilityFixes: false,
         bytes: model.length,
       },
     ]);
@@ -1741,7 +1745,7 @@ try {
     assert.equal(recipe.profile, "ncdhw-centered-v2");
     assert.equal(recipe.precision, precision);
     assert.equal(recipe.provider, "webgpu");
-    assert.equal(recipe.compatibilityFixes, false);
+    assert.equal("compatibilityFixes" in recipe, false);
     assert.equal(recipe.overlap, false);
     assert.equal(recipe.mode, "live");
     assert.equal(recipe.inputScaleIndex, 0);
@@ -1772,15 +1776,59 @@ try {
         ["*", appUrl.origin].includes(delivery.accessControlAllowOrigin),
         "Native model response must allow the deployed app origin",
       );
-    assert.deepEqual(
-      [...new Set(record.runtimeAssets.map((a) => a.url))].sort(),
-      runtimeAssets.map((a) => a.url).sort(),
-      "Only the expected native Asyncify runtime URLs may be fetched",
-    );
-    for (const asset of record.runtimeAssets) {
-      const target = runtimeAssets.find((a) => a.url === asset.url);
+    const observedRuntime = [];
+    if (manifest) {
+      assert.deepEqual(
+        [...new Set(record.runtimeAssets.map((a) => a.url))].sort(),
+        runtimeAssets.map((a) => a.url).sort(),
+        "Only the expected native Asyncify runtime URLs may be fetched",
+      );
+      observedRuntime.push(...record.runtimeAssets);
+    } else {
+      // Identify bundled assets from their actual URLs and decoded contents.
+      // In particular, the WASM filename may be only a bundler hash.
+      for (const { extension, sha256 } of runtimeAssets) {
+        const filename =
+          extension === "mjs"
+            ? /^ort-wasm-simd-threaded\.asyncify\.[\da-f]+\.mjs$/
+            : /^(?:ort-wasm-simd-threaded\.asyncify\.)?[\da-f]+\.wasm$/;
+        const matching = [];
+        const responses = new Map(
+          record.runtimeAssets
+            .filter((a) => a.status === 200)
+            .map((a) => [a.url, a]),
+        );
+        for (const asset of responses.values()) {
+          const { origin, pathname } = new URL(asset.url);
+          if (
+            origin !== appUrl.origin ||
+            !filename.test(pathname.split("/").at(-1))
+          )
+            continue;
+          // The Chrome inspector may evict response bodies from worker targets.
+          const response = await page.context().request.get(asset.url);
+          try {
+            assert.equal(response.status(), 200);
+            assert.equal(response.url(), asset.url);
+            if (hash(await response.body()) === sha256) matching.push(asset);
+          } finally {
+            await response.dispose();
+          }
+        }
+        assert.equal(
+          matching.length,
+          1,
+          `Expected one bundled Asyncify ${extension} response`,
+        );
+        observedRuntime.push({ ...matching[0], extension });
+      }
+    }
+    for (const asset of observedRuntime) {
+      const target = runtimeAssets.find((a) =>
+        manifest ? a.url === asset.url : a.extension === asset.extension,
+      );
       assert(target);
-      assert.equal(asset.requestedUrl, target.url);
+      assert.equal(asset.requestedUrl, asset.url);
       assert.equal(asset.redirectedFrom, undefined);
       assert.equal(asset.status, 200);
       const mime = asset.contentType?.split(";", 1)[0].trim().toLowerCase();
@@ -1896,11 +1944,7 @@ try {
   const legacy = page.getByLabel("Apply legacy JSEP padding fixes", {
     exact: true,
   });
-  assert.equal(
-    await legacy.isChecked(),
-    false,
-    "Use original graph, no legacy fixes",
-  );
+  assert.equal(await legacy.count(), 0, "No legacy rewrite control");
   await page.getByLabel("Model URL (.onnx)").fill(modelUrl);
   await page
     .getByRole("button", { name: "Load model URL", exact: true })

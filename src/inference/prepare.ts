@@ -16,7 +16,7 @@
 
 /**
  * Optional preparation for exact, verified exports, NOT an ONNX parser.
- * Import only from lazy inference code, not from the application entry.
+ * Retained for offline regression tests, not used by the inference worker.
  *
  * The immutable splice recipes are protobuf-record diffs between fingerprinted
  * originals and padding-only prepared models (onnx 1.23.2). They replace Conv
@@ -31,11 +31,15 @@
  * There is no Python, server, ORT deep import, or protobuf dependency at runtime.
  */
 
-import type { InferenceCompatibilityAnalysis } from "#src/inference/model.js";
 import * as model6280000Recipe from "#src/inference/model6280000_jsep_recipe.js";
 import * as nooversegRecipe from "#src/inference/nooverseg_jsep_recipe.js";
 
-export type CompatibilityAnalysis = InferenceCompatibilityAnalysis;
+export interface CompatibilityAnalysis {
+  status: "available" | "already-prepared" | "unverified";
+  model?: "nooverseg" | "model6280000";
+  fixes: string[];
+  message: string;
+}
 
 export interface PreparedNooversegModel {
   model: ArrayBuffer;

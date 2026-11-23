@@ -1,6 +1,11 @@
 import path from "node:path";
 import { defineConfig } from "@rspack/cli";
-import { HtmlRspackPlugin, ProgressPlugin } from "@rspack/core";
+import {
+  HtmlRspackPlugin,
+  LightningCssMinimizerRspackPlugin,
+  ProgressPlugin,
+  SwcJsMinimizerRspackPlugin,
+} from "@rspack/core";
 import { normalizeConfigurationWithDefine } from "./build_tools/rspack/configuration_with_define.js";
 import packageJson from "./package.json" with { type: "json" };
 
@@ -18,13 +23,20 @@ export default defineConfig((env, args) => {
       maxEntrypointSize: 3 * 1024 * 1024,
     },
     optimization: {
+      minimizer: [
+        new SwcJsMinimizerRspackPlugin({
+          // Preserve the packaged ONNX Runtime factory byte-for-byte.
+          exclude: /ort-wasm-simd-threaded\.asyncify\.[^.]+\.mjs$/,
+        }),
+        new LightningCssMinimizerRspackPlugin(),
+      ],
       splitChunks: {
         chunks: "all",
       },
     },
     devtool: "source-map",
     resolve: {
-      // Keep ORT's JSEP JS factory external, alongside its matching WASM.
+      // Emit ORT's native JS factory as an asset, alongside its matching WASM.
       conditionNames: ["onnxruntime-web-use-extern-wasm", "..."],
     },
     module: {
@@ -55,7 +67,7 @@ export default defineConfig((env, args) => {
         {
           // Emit the factory unchanged, not as a JS chunk: ORT imports its URL
           // directly and Emscripten also uses it to start WASM thread workers.
-          test: /ort-wasm-simd-threaded\.jsep\.mjs$/,
+          test: /ort-wasm-simd-threaded\.asyncify\.mjs$/,
           type: "asset/resource",
           generator: {
             filename: "[name].[contenthash][ext]",

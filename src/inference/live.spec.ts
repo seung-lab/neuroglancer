@@ -689,7 +689,6 @@ describe("live globally anchored inference", () => {
         arrayBuffer: async () => new ArrayBuffer(1),
       } as File,
       "webgpu",
-      undefined,
       "float16",
     );
     const pooledLive = new LiveInference(pooledController, source, onError);

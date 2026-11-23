@@ -27,17 +27,25 @@ import { ProviderSession } from "#src/inference/provider.js";
 declare const NEUROGLANCER_INFERENCE_WASM_BASE: string | undefined;
 declare const NEUROGLANCER_INFERENCE_MAX_CPU_THREADS: number | undefined;
 
-// Default to the pinned native Asyncify CDN pair for GPU and CPU.
-// Explicit custom bundles can instead supply a runtime directory.
-// The onnxruntime-web-use-extern-wasm condition avoids embedding another factory.
-const runtimeBase =
-  typeof NEUROGLANCER_INFERENCE_WASM_BASE === "undefined"
-    ? "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.31.1/dist/"
-    : new URL(NEUROGLANCER_INFERENCE_WASM_BASE, self.location.href).href;
-ort.env.wasm.wasmPaths = {
-  mjs: `${runtimeBase}ort-wasm-simd-threaded.asyncify.mjs`,
-  wasm: `${runtimeBase}ort-wasm-simd-threaded.asyncify.wasm`,
-};
+// Ship the matching native Asyncify assets from the installed ORT package.
+if (typeof NEUROGLANCER_INFERENCE_WASM_BASE === "undefined") {
+  ort.env.wasm.wasmPaths = {
+    mjs: new URL(
+      "onnxruntime-web/ort-wasm-simd-threaded.asyncify.mjs",
+      import.meta.url,
+    ).href,
+    wasm: new URL(
+      "onnxruntime-web/ort-wasm-simd-threaded.asyncify.wasm",
+      import.meta.url,
+    ).href,
+  };
+} else {
+  const base = new URL(NEUROGLANCER_INFERENCE_WASM_BASE, self.location.href);
+  ort.env.wasm.wasmPaths = {
+    mjs: new URL("ort-wasm-simd-threaded.asyncify.mjs", base).href,
+    wasm: new URL("ort-wasm-simd-threaded.asyncify.wasm", base).href,
+  };
+}
 // Keep the isolated default at four; trusted builds can explicitly override it.
 const maxCpuThreads =
   typeof NEUROGLANCER_INFERENCE_MAX_CPU_THREADS === "undefined"
@@ -80,7 +88,6 @@ async function handle(request: InferenceWorkerRequest) {
       const metadata = await session.load(
         request.model,
         request.provider,
-        request.compatibilityFixes,
         request.precision,
       );
       await updateWebGpuFeatures(metadata);

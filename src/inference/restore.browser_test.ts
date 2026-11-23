@@ -278,7 +278,7 @@ describe("inference recipe datasource restoration", () => {
     [2, false],
     [2, true],
   ] as const)(
-    "restores v%s compatibility policy %s exactly without opting legacy recipes in",
+    "restores v%s with legacy compatibility flag %s without forwarding it",
     async (version, compatibilityFixes) => {
       const f = await fixture();
       const recipe: InferenceRecipe = {
@@ -300,7 +300,6 @@ describe("inference recipe datasource restoration", () => {
       expect(f.controller.loadModel).toHaveBeenCalledExactlyOnceWith(
         expect.any(File),
         "cpu",
-        compatibilityFixes,
         undefined,
       );
       expect(JSON.stringify(recipe)).toBe(before);
@@ -316,7 +315,7 @@ describe("inference recipe datasource restoration", () => {
     [2, "float32"],
     [2, "float16"],
   ] as const)(
-    "restores v%s precision %s as the fourth load argument without rewriting saved JSON",
+    "restores v%s precision %s as the third load argument without rewriting saved JSON",
     async (version, precision) => {
       const f = await fixture();
       const recipe: InferenceRecipe = {
@@ -339,7 +338,6 @@ describe("inference recipe datasource restoration", () => {
       expect(f.controller.loadModel).toHaveBeenCalledExactlyOnceWith(
         expect.any(File),
         "cpu",
-        false,
         precision,
       );
       expect(JSON.stringify(recipe)).toBe(saved);
@@ -558,7 +556,6 @@ describe("inference recipe datasource restoration", () => {
       expect.any(File),
       "cpu",
       undefined,
-      undefined,
     );
     expect(
       (f.controller.loadModel.mock.calls[0] as unknown as [File])[0].name,
@@ -641,7 +638,6 @@ describe("inference recipe datasource restoration", () => {
     expect(f.controller.loadModel).toHaveBeenCalledWith(
       expect.any(File),
       "cpu",
-      undefined,
       undefined,
     );
     expect(f.controller.run).not.toHaveBeenCalled();

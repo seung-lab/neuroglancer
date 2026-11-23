@@ -20,16 +20,10 @@ import {
   type ExecutionProvider,
   type InferenceProvider,
   type InferencePrecision,
-  type InferenceCompatibilityAnalysis,
   type ModelMetadata,
   MAX_MODEL_BYTES,
   validateModelMetadata,
 } from "#src/inference/model.js";
-
-import {
-  inspectWebGpuCompatibility,
-  prepareModelForWebGpu,
-} from "#src/inference/prepare.js";
 
 /** Called in the dedicated module worker, not on the viewer's main thread. */
 export async function requireWebGpu() {
@@ -80,11 +74,8 @@ export class ProviderSession {
   private model: ArrayBuffer | undefined;
   private requested: InferenceProvider = "auto";
   private firstRun = true;
-  private compatibilityFixes: boolean | undefined;
-  private compatibilityAnalysis: InferenceCompatibilityAnalysis | undefined;
   private requestedPrecision: InferencePrecision = "float32";
   private precisionFallbackReason: string | undefined;
-  private prepared: Awaited<ReturnType<ProviderSession["prepare"]>> | undefined;
   private freeDimensionOverrides: Record<string, number> | undefined;
 
   constructor(
@@ -94,17 +85,6 @@ export class ProviderSession {
     ) => Promise<ort.InferenceSession>,
     private readonly threads: number,
     private readonly checkWebGpu: () => Promise<unknown> = requireWebGpu,
-    private readonly prepare: (
-      model: ArrayBuffer,
-      enabled: boolean | undefined,
-    ) => Promise<{
-      model: ArrayBuffer;
-      preparation?: ModelMetadata["preparation"];
-      compatibilityAnalysis?: InferenceCompatibilityAnalysis;
-    }> = prepareModelForWebGpu,
-    private readonly inspect: (
-      model: ArrayBuffer,
-    ) => Promise<InferenceCompatibilityAnalysis> = inspectWebGpuCompatibility,
     private readonly prepareFp16: (
       model: ArrayBuffer,
     ) => Promise<{ model: ArrayBuffer }> = async (model) =>
@@ -155,7 +135,6 @@ export class ProviderSession {
     actualProvider: ExecutionProvider,
     start: number,
     fallbackReason?: string,
-    preparation?: ModelMetadata["preparation"],
     actualPrecision: InferencePrecision = "float32",
   ) {
     try {
@@ -191,14 +170,7 @@ export class ProviderSession {
         ...(this.precisionFallbackReason === undefined
           ? {}
           : { precisionFallbackReason: this.precisionFallbackReason }),
-        ...(this.compatibilityFixes === undefined
-          ? {}
-          : { compatibilityFixes: this.compatibilityFixes }),
-        ...(this.compatibilityAnalysis === undefined
-          ? {}
-          : { compatibilityAnalysis: this.compatibilityAnalysis }),
         ...(fallbackReason === undefined ? {} : { fallbackReason }),
-        ...(preparation === undefined ? {} : { preparation }),
       };
       validateModelMetadata(metadata);
       this.session = next;
@@ -213,7 +185,6 @@ export class ProviderSession {
   async load(
     model: ArrayBuffer,
     requested: InferenceProvider,
-    compatibilityFixes?: boolean,
     precision: InferencePrecision = "float32",
   ) {
     await this.session?.release();
@@ -221,11 +192,8 @@ export class ProviderSession {
     this.metadata = undefined;
     this.model = undefined;
     this.requested = requested;
-    this.compatibilityFixes = compatibilityFixes;
-    this.compatibilityAnalysis = undefined;
     this.requestedPrecision = precision;
     this.precisionFallbackReason = undefined;
-    this.prepared = undefined;
     this.freeDimensionOverrides = undefined;
     this.firstRun = true;
     if (model.byteLength === 0 || model.byteLength > MAX_MODEL_BYTES)
@@ -236,7 +204,6 @@ export class ProviderSession {
     let next: ort.InferenceSession;
     let actual: ExecutionProvider = "wasm";
     let fallbackReason: string | undefined;
-    let preparation: ModelMetadata["preparation"];
     let adapter: unknown;
     if (requested !== "cpu") {
       try {
@@ -261,7 +228,6 @@ export class ProviderSession {
       else {
         // Convert original bytes only. Do not also build an FP32 graph unless
         // native conversion/create/run actually requires a precision fallback.
-        this.compatibilityAnalysis = await this.inspect(model);
         let native: ort.InferenceSession | undefined;
         try {
           const converted = await this.prepareFp16(model);
@@ -280,7 +246,6 @@ export class ProviderSession {
             "webgpu",
             start,
             undefined,
-            undefined,
             "float16",
           );
           this.model = model;
@@ -289,17 +254,11 @@ export class ProviderSession {
       }
     }
     if (requested === "cpu" || fallbackReason !== undefined) {
-      this.compatibilityAnalysis = await this.inspect(model);
       next = await this.createSession(model, { executionProviders: ["wasm"] });
     } else {
-      // Inspect exactly once per load. Preparation returns its own analysis;
-      // disabled fixes inspect without ever invoking a graph rewrite.
-      // Fail closed on inspection/preparation errors, outside provider retry.
-      const prepared = await this.prepareFp32(model);
       try {
         // Native ORT owns its device/limits; do not inject a custom GPUDevice.
-        next = await this.createSession(prepared.model, WEBGPU_SESSION_OPTIONS);
-        preparation = prepared.preparation;
+        next = await this.createSession(model, WEBGPU_SESSION_OPTIONS);
         actual = "webgpu";
       } catch (error) {
         if (requested === "webgpu")
@@ -313,29 +272,9 @@ export class ProviderSession {
     if (actual === "wasm" && precision === "float16" && requested !== "cpu")
       this.precisionFallbackReason = `${this.precisionFallbackReason ?? "FP16 unavailable"}; using FP32 CPU`;
     // Outside the GPU create catch: invalid profiles cannot fall back.
-    const metadata = await this.accept(
-      next,
-      actual,
-      start,
-      fallbackReason,
-      preparation,
-    );
+    const metadata = await this.accept(next, actual, start, fallbackReason);
     if (requested === "auto" && actual === "webgpu") this.model = model;
     return metadata;
-  }
-
-  private async prepareFp32(model: ArrayBuffer) {
-    // Reuse the prepared graph on first-execution precision fallback.
-    this.prepared ??=
-      this.compatibilityFixes === false
-        ? {
-            model,
-            compatibilityAnalysis:
-              this.compatibilityAnalysis ?? (await this.inspect(model)),
-          }
-        : await this.prepare(model, this.compatibilityFixes);
-    this.compatibilityAnalysis = this.prepared.compatibilityAnalysis;
-    return this.prepared;
   }
 
   private async retryCpu(reason: string) {
@@ -351,17 +290,16 @@ export class ProviderSession {
 
   private async retryFp32() {
     const start = performance.now();
-    const prepared = await this.prepareFp32(this.model!);
     let next: ort.InferenceSession;
     try {
-      next = await this.createSession(prepared.model, WEBGPU_SESSION_OPTIONS);
+      next = await this.createSession(this.model!, WEBGPU_SESSION_OPTIONS);
     } catch (error) {
       const reason = `WebGPU initialization failed: ${message(error)}`;
       if (this.requested !== "auto") throw new Error(reason);
       return this.retryCpu(reason);
     }
     // Invalid profiles must not trigger either precision or provider retries.
-    await this.accept(next, "webgpu", start, undefined, prepared.preparation);
+    await this.accept(next, "webgpu", start);
     return next;
   }
 
@@ -412,7 +350,6 @@ export class ProviderSession {
     } finally {
       this.firstRun = false;
       this.model = undefined;
-      this.prepared = undefined;
     }
   }
 }

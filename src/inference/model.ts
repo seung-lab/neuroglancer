@@ -23,13 +23,6 @@ export type InferenceProvider = "auto" | "webgpu" | "cpu";
 export type InferencePrecision = "float32" | "float16";
 export type ExecutionProvider = "webgpu" | "wasm";
 
-export interface InferenceCompatibilityAnalysis {
-  status: "available" | "already-prepared" | "unverified";
-  model?: "nooverseg" | "model6280000";
-  fixes: string[];
-  message: string;
-}
-
 export interface ProviderMetadata {
   requestedProvider: InferenceProvider;
   actualProvider: ExecutionProvider;
@@ -37,11 +30,6 @@ export interface ProviderMetadata {
   requestedPrecision?: InferencePrecision;
   actualPrecision?: InferencePrecision;
   precisionFallbackReason?: string;
-  /** Compatibility rewrites applied in memory to the selected original file. */
-  preparation?: "nooverseg-jsep" | "model6280000-jsep";
-  /** Requested policy; absent preserves the legacy old-model-only policy. */
-  compatibilityFixes?: boolean;
-  compatibilityAnalysis?: InferenceCompatibilityAnalysis;
 }
 
 export interface ModelMetadata extends ProviderMetadata {
@@ -233,7 +221,6 @@ export type InferenceWorkerRequest =
       kind: "load";
       model: ArrayBuffer;
       provider: InferenceProvider;
-      compatibilityFixes?: boolean;
       precision?: InferencePrecision;
     }
   | {

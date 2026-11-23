@@ -297,7 +297,6 @@ export async function restoreInferenceRecipe(
     const metadata = await controller.loadModel(
       file,
       recipe.provider,
-      recipe.compatibilityFixes,
       recipe.precision,
     );
     signal.throwIfAborted();

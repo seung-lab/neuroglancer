@@ -327,7 +327,6 @@ describe("browser inference worker", () => {
         const metadata = await controller.loadModel(
           new File([bytes], "concat.onnx"),
           "cpu",
-          undefined,
           precision,
         );
         expect(metadata).toMatchObject({

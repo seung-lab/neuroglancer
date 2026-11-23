@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-/* global window, Worker, fetch */
+/* global window, Worker, fetch, navigator */
 
 /**
  * Real production-worker provider smoke, served beneath /app/.
@@ -23,13 +23,14 @@
  * This checks unavailable-GPU Auto fallback by default. To require hardware:
  *   HEADFUL=1 CHROME=/usr/bin/google-chrome node tests/inference/provider_production.mjs
  * On Linux set WAYLAND_DISPLAY/XDG_RUNTIME_DIR for a working desktop session.
- * MODEL=/absolute/path/nooverseg.onnx checks automatic in-worker preparation of
- * the original model: strict/Auto WebGPU match the original CPU reference.
- * PREPARED_MODEL=/absolute/path/nooverseg-jsep.onnx additionally checks the
- * prepared model against MODEL on two inputs (MODEL is required). Hardware runs
- * require strict/Auto GPU execution; no-GPU runs check visible CPU fallback.
+ * MODEL=/absolute/path/nooverseg.onnx compares original-model WebGPU against
+ * the original CPU reference, without runtime graph rewrites.
+ * PREPARED_MODEL=/absolute/path/nooverseg-jsep.onnx additionally checks an
+ * offline-prepared file against MODEL on two inputs (MODEL is required).
+ * Hardware runs require strict/Auto GPU execution; no-GPU runs check fallback.
  * ISOLATED=1 deliberately serves strict COOP/COEP headers as a regression
- * fixture; ISOLATED=0 uses auth-compatible headers. Both must use one WASM thread.
+ * fixture; ISOLATED=0 uses auth-compatible headers and one WASM thread.
+ * MAX_CPU_THREADS is the expected isolated build cap (default 4).
  * Numerical bounds below are regression checks, not training-accuracy validation.
  */
 import assert from "node:assert/strict";
@@ -48,7 +49,7 @@ assert(
   !process.env.PREPARED_MODEL || process.env.MODEL,
   "PREPARED_MODEL requires the original MODEL reference",
 );
-const requests = [];
+const maxCpuThreads = Number(process.env.MAX_CPU_THREADS ?? 4);
 let workerFile;
 for (const file of await fs.readdir(dist)) {
   if (!file.endsWith(".js")) continue;
@@ -72,7 +73,6 @@ const server = http.createServer(async (req, res) => {
       res.setHeader("Cross-Origin-Embedder-Policy", "unsafe-none");
     }
     const url = new URL(req.url, "http://localhost").pathname;
-    requests.push(url);
     if (url === "/") {
       res.setHeader("Content-Type", "text/html");
       res.end("<html>Production inference provider smoke</html>");
@@ -120,10 +120,28 @@ try {
   });
   const page = await browser.newPage();
   const errors = [];
+  const runtimeAssets = [];
+  const base = `http://127.0.0.1:${server.address().port}`;
+  page.context().on("response", (response) => {
+    const url = response.url();
+    if (!/\.(mjs|wasm)$/.test(new URL(url).pathname)) return;
+    runtimeAssets.push({
+      url,
+      status: response.status(),
+      contentType: response.headers()["content-type"],
+    });
+  });
   page.on("pageerror", (error) => errors.push(String(error)));
-  await page.goto(`http://127.0.0.1:${server.address().port}`);
+  await page.goto(base);
   const result = await page.evaluate(
-    async ({ workerFile, headful, realModel, preparedModel, isolated }) => {
+    async ({
+      workerFile,
+      headful,
+      realModel,
+      preparedModel,
+      isolated,
+      maxCpuThreads,
+    }) => {
       const check = (value, message) => {
         if (!value) throw new Error(message);
       };
@@ -131,6 +149,19 @@ try {
         window.crossOriginIsolated === isolated,
         "unexpected cross-origin isolation",
       );
+      const expectedThreads = isolated
+        ? Math.max(
+            1,
+            Math.min(maxCpuThreads, navigator.hardwareConcurrency || 1),
+          )
+        : 1;
+      const checkMetadata = (metadata) => {
+        check(metadata.threads === expectedThreads, "wrong WASM thread count");
+        check(
+          !("compatibilityFixes" in metadata) && !("preparation" in metadata),
+          "unexpected runtime graph rewrite metadata",
+        );
+      };
       const geometry = {
         inputShape: [20, 80, 80],
         inputSpacing: [40, 16, 16],
@@ -169,10 +200,7 @@ try {
           });
           if (load.kind === "error") return { load, runs: [] };
           check(load.kind === "loaded", "missing load response");
-          check(
-            load.metadata?.threads === 1,
-            "WASM must stay single-threaded even when isolated",
-          );
+          checkMetadata(load.metadata);
           const runs = [];
           for (let i = 0; i < 2; ++i) {
             const response = await request({
@@ -187,7 +215,7 @@ try {
             runs.push(response);
             if (response.kind === "error") break;
             check(response.kind === "output", "missing output response");
-            check(response.metadata?.threads === 1, "wrong WASM thread count");
+            checkMetadata(response.metadata);
             check(
               response.output.length === 4 * 16 * 60 * 60,
               "wrong crop size",
@@ -295,7 +323,6 @@ try {
       if (realModel) {
         reference = await runCase("/model.onnx", "cpu", true);
         check(reference.runs[0]?.kind === "output", "real model CPU failed");
-        check(!reference.load.metadata.preparation, "CPU changed the model");
         const automatic = await runCase("/model.onnx", "auto", true);
         const strict = await runCase("/model.onnx", "webgpu", true);
         const actual = headful ? "webgpu" : "wasm";
@@ -307,18 +334,14 @@ try {
           compareModel(strict, reference, "webgpu", tolerance);
           check(
             [...automatic.runs, ...strict.runs].every(
-              (run) =>
-                run.metadata.preparation === "nooverseg-jsep" &&
-                !run.metadata.fallbackReason,
+              (run) => !run.metadata.fallbackReason,
             ),
-            "original model was not automatically prepared on GPU",
+            "original model silently fell back on GPU",
           );
         } else {
           check(strict.load.kind === "error", "strict GPU silently fell back");
           check(
-            auto.every(
-              (run) => run.metadata.fallbackReason && !run.metadata.preparation,
-            ),
+            auto.every((run) => run.metadata.fallbackReason),
             "missing original-CPU fallback metadata",
           );
         }
@@ -337,11 +360,6 @@ try {
         const rewrittenAuto = await runCase("/prepared.onnx", "auto", true);
         const comparePrepared = (candidate, actualProvider, tolerance) =>
           compareModel(candidate, reference, actualProvider, tolerance);
-        check(
-          !rewrittenAuto.load.metadata?.preparation &&
-            !rewrittenCpu.load.metadata?.preparation,
-          "already prepared file was rewritten again",
-        );
         const cpu = comparePrepared(rewrittenCpu, "wasm", { max: 0, mean: 0 });
         let strict, auto;
         if (headful) {
@@ -388,13 +406,32 @@ try {
       realModel: Boolean(process.env.MODEL),
       preparedModel: Boolean(process.env.PREPARED_MODEL),
       isolated: process.env.ISOLATED === "1",
+      maxCpuThreads,
     },
   );
   assert.deepEqual(errors, []);
-  const wasmRequests = requests.filter((url) => url.endsWith(".wasm"));
-  assert(wasmRequests.length > 0, "no WASM asset request observed");
-  assert(wasmRequests.every((url) => url.startsWith("/app/")));
-  console.log(JSON.stringify({ result, wasmRequests }, null, 2));
+  for (const [filename, mime] of [
+    [/^ort-wasm-simd-threaded\.asyncify\.[\da-f]+\.mjs$/, /javascript/],
+    [
+      /^(?:ort-wasm-simd-threaded\.asyncify\.)?[\da-f]+\.wasm$/,
+      /application\/wasm/,
+    ],
+  ]) {
+    const matching = runtimeAssets.filter((asset) => {
+      const url = new URL(asset.url);
+      return asset.status === 200 && filename.test(path.basename(url.pathname));
+    });
+    assert.equal(
+      new Set(matching.map((asset) => asset.url)).size,
+      1,
+      `Expected one bundled runtime asset matching ${filename}: ${JSON.stringify(runtimeAssets)}`,
+    );
+    for (const asset of matching) {
+      assert(asset.url.startsWith(`${base}/app/`));
+      assert.match(asset.contentType ?? "", mime);
+    }
+  }
+  console.log(JSON.stringify({ result, runtimeAssets }, null, 2));
   console.log(
     "PASS: production provider selection, crop values, session reuse and fallback",
   );

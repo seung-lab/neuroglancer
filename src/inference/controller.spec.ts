@@ -93,9 +93,6 @@ class FakeWorker {
                 actualPrecision:
                   request.provider === "webgpu" ? request.precision : "float32",
               }),
-          ...(request.compatibilityFixes === undefined
-            ? {}
-            : { compatibilityFixes: request.compatibilityFixes }),
           actualProvider: request.provider === "webgpu" ? "webgpu" : "wasm",
           ...this.loadMetadataOverride,
         };
@@ -306,7 +303,7 @@ describe("pooled inference cancellation and source isolation", () => {
     const read = vi.spyOn(source, "readPatch");
     const canceledPatchSignals: AbortSignal[] = [];
     try {
-      await controller.loadModel(file, "webgpu", false, "float16");
+      await controller.loadModel(file, "webgpu", "float16");
       await controller.run(source, tile(0));
       workers[0].hold = true;
       const active = controller.run(source, tile(4));
@@ -371,7 +368,7 @@ describe("pooled inference cancellation and source isolation", () => {
       return patch;
     });
     try {
-      await controller.loadModel(file, "webgpu", false, "float16");
+      await controller.loadModel(file, "webgpu", "float16");
       await controller.run(a.source, tile(0));
       workers[0].hold = true;
       const left = controller.run(a.source, tile(4));
@@ -425,7 +422,7 @@ describe("pooled inference cancellation and source isolation", () => {
     const lastAdd = vi.spyOn(lastAbort.signal, "addEventListener");
     const lastRemove = vi.spyOn(lastAbort.signal, "removeEventListener");
     try {
-      await controller.loadModel(file, "webgpu", false, "float16");
+      await controller.loadModel(file, "webgpu", "float16");
       await controller.run(source, tile(0));
       workers[0].hold = true;
       const first = controller.run(source, tile(4, firstAbort.signal));
@@ -573,7 +570,7 @@ describe("OnnxInferenceController", () => {
     await controller.run(source, roi);
     // Channels, provider and precision do not affect the spatial mask either.
     modelShapes.outputShape = [1, 1, 8, 16, 16];
-    await controller.loadModel(file, "webgpu", false, "float16");
+    await controller.loadModel(file, "webgpu", "float16");
     await controller.run(source, roi);
     workers.at(-1)!.outputFailure = "error";
     await expect(controller.run(source, roi)).rejects.toThrow(
@@ -1079,47 +1076,18 @@ describe("OnnxInferenceController", () => {
     expect(controller["patchCacheBytes"]).toBe(0);
   });
 
-  it.each([undefined, false, true])(
-    "preserves compatibility policy %s on cancel/reload and records provenance",
-    async (compatibilityFixes) => {
-      const { controller, workers, file } = setup();
-      const { source } = input();
-      const roi = { ...options, shapeZYX: [1, 1, 1] };
-      await controller.loadModel(file, "webgpu", compatibilityFixes);
-      controller.cancel();
-      const result = await controller.run(source, roi);
-      for (const worker of workers) {
-        expect(worker.loadRequests[0].compatibilityFixes).toBe(
-          compatibilityFixes,
-        );
-        expect(
-          Object.hasOwn(worker.loadRequests[0], "compatibilityFixes"),
-        ).toBe(compatibilityFixes !== undefined);
-      }
-      if (compatibilityFixes === undefined)
-        expect(result.provenance).not.toHaveProperty("compatibilityFixes");
-      else
-        expect(result.provenance).toHaveProperty(
-          "compatibilityFixes",
-          compatibilityFixes,
-        );
-      controller.dispose();
-    },
-  );
-
   it.each([undefined, "float32", "float16"] as const)(
     "preserves requested precision %s on cancellation/reload and in provenance",
     async (precision) => {
       const { controller, workers, file } = setup();
       const { source } = input();
       const roi = { ...options, shapeZYX: [1, 1, 1] };
-      await controller.loadModel(file, "webgpu", false, precision);
+      await controller.loadModel(file, "webgpu", precision);
       controller.cancel();
       const result = await controller.run(source, roi);
       for (const worker of workers) {
         expect(worker.loadRequests[0]).toMatchObject({
           provider: "webgpu",
-          compatibilityFixes: false,
         });
         expect(worker.loadRequests[0].precision).toBe(precision);
         expect(Object.hasOwn(worker.loadRequests[0], "precision")).toBe(
@@ -1139,52 +1107,30 @@ describe("OnnxInferenceController", () => {
     },
   );
 
-  it.each([
-    {
-      setting: "precision",
-      selections: [
-        [false, undefined],
-        [false, "float16"],
-        [false, "float32"],
-        [false, "float16"],
-      ],
-    },
-    {
-      setting: "compatibility flag",
-      selections: [
-        [undefined, undefined],
-        [false, undefined],
-        [true, undefined],
-        [false, undefined],
-      ],
-    },
-  ] as const)(
-    "never reuses cached predictions when only the requested $setting changes",
-    async ({ selections }) => {
-      const { controller, workers, file } = setup();
-      const { source, origins } = input();
-      const roi = { ...options, shapeZYX: [1, 1, 1] };
-      for (const [compatibilityFixes, precision] of selections) {
-        await controller.loadModel(
-          file,
-          "webgpu",
-          compatibilityFixes,
-          precision,
-        );
-        await controller.run(source, roi);
-        await controller.run(source, roi);
-      }
-      expect(origins).toHaveLength(4);
-      expect(workers.map((worker) => worker.runs)).toEqual([1, 1, 1, 1]);
-      controller.dispose();
-    },
-  );
+  it("never reuses cached predictions when only the requested precision changes", async () => {
+    const { controller, workers, file } = setup();
+    const { source, origins } = input();
+    const roi = { ...options, shapeZYX: [1, 1, 1] };
+    for (const precision of [
+      undefined,
+      "float16",
+      "float32",
+      "float16",
+    ] as const) {
+      await controller.loadModel(file, "webgpu", precision);
+      await controller.run(source, roi);
+      await controller.run(source, roi);
+    }
+    expect(origins).toHaveLength(4);
+    expect(workers.map((worker) => worker.runs)).toEqual([1, 1, 1, 1]);
+    controller.dispose();
+  });
 
   it("invalidates patches on precision metadata changes and records visible fallback provenance", async () => {
     const { controller, workers, file } = setup();
     const seen: ModelMetadata[] = [];
     controller.onMetadata = (metadata) => seen.push(structuredClone(metadata));
-    await controller.loadModel(file, "webgpu", false, "float16");
+    await controller.loadModel(file, "webgpu", "float16");
     const { source } = input();
     const a = { ...options, shapeZYX: [1, 1, 1] };
     const b = { ...a, originZYX: [2, 10, 70] };
@@ -1218,35 +1164,7 @@ describe("OnnxInferenceController", () => {
     controller.dispose();
   });
 
-  it("invalidates on compatibility metadata changes and preserves analysis in provenance", async () => {
-    const { controller, workers, file } = setup();
-    await controller.loadModel(file, "webgpu", true);
-    const { source } = input();
-    const a = { ...options, shapeZYX: [1, 1, 1] };
-    const b = { ...a, originZYX: [2, 10, 70] };
-    const analysis = {
-      status: "available" as const,
-      model: "model6280000" as const,
-      fixes: ["Verified fixes"],
-      message: "Verified fixes available",
-    };
-    await controller.run(source, a);
-    workers[0].metadata.compatibilityAnalysis = analysis;
-    const result = await controller.run(source, b);
-    expect(result.provenance).toMatchObject({
-      compatibilityFixes: true,
-      compatibilityAnalysis: analysis,
-    });
-    await controller.run(source, a);
-    expect(workers[0].runs).toBe(3);
-    workers[0].metadata.compatibilityFixes = false;
-    await controller.run(source, { ...a, originZYX: [2, 10, 110] });
-    await controller.run(source, a);
-    expect(workers[0].runs).toBe(5);
-    controller.dispose();
-  });
-
-  it("invalidates on reported fallback/preparation changes but retains normal response entries", async () => {
+  it("invalidates on reported fallback changes but retains normal response entries", async () => {
     const { controller, workers, file } = setup();
     await controller.loadModel(file, "webgpu");
     const { source } = input();
@@ -1266,10 +1184,6 @@ describe("OnnxInferenceController", () => {
     await controller.run(source, a);
     await controller.run(source, c);
     expect(workers[0].runs).toBe(4);
-    workers[0].metadata.preparation = "nooverseg-jsep";
-    await controller.run(source, b);
-    await controller.run(source, a);
-    expect(workers[0].runs).toBe(6);
     controller.dispose();
   });
 
@@ -2542,37 +2456,6 @@ describe("OnnxInferenceController", () => {
     controller.dispose();
   });
 
-  it("records preparation in ROI provenance only when the executing worker reports it", async () => {
-    const { controller, workers, file } = setup();
-    await controller.loadModel(file, "webgpu");
-    workers[0].metadata.preparation = "nooverseg-jsep";
-    const { source } = input();
-    const roi = { ...options, shapeZYX: [1, 1, 1] };
-    const prepared = await controller.run(source, roi);
-    expect(prepared.provenance).toMatchObject({
-      modelName: "local.onnx",
-      actualProvider: "webgpu",
-      preparation: "nooverseg-jsep",
-    });
-    workers[0].metadata = {
-      ...workers[0].metadata,
-      actualProvider: "wasm",
-      preparation: undefined,
-      fallbackReason: "WebGPU first execution failed: device lost",
-    };
-    // Force a new context: a cache hit cannot observe unreported worker changes.
-    const cpu = await controller.run(source, {
-      ...roi,
-      originZYX: [22, 10, 10],
-    });
-    expect(cpu.provenance).toMatchObject({
-      actualProvider: "wasm",
-      fallbackReason: "WebGPU first execution failed: device lost",
-    });
-    expect(cpu.provenance).not.toHaveProperty("preparation");
-    controller.dispose();
-  });
-
   it("rejects invalid halo, memory budget and changed source before running", async () => {
     const { controller, workers, file } = setup();
     await controller.loadModel(file);
@@ -2745,7 +2628,7 @@ describe("OnnxInferenceController", () => {
   describe("gated demand-driven WebGPU worker pool", () => {
     it("defaults to 1 worker when NEUROGLANCER_INFERENCE_MAX_WEBGPU_WORKERS is omitted and hard-pins CPU to 1 worker", async () => {
       const def = setup();
-      await def.controller.loadModel(def.file, "webgpu", undefined, "float16");
+      await def.controller.loadModel(def.file, "webgpu", "float16");
       const { source } = input();
       await def.controller.run(source, { ...options, shapeZYX: [16, 60, 60] });
       expect(def.workers).toHaveLength(1);
@@ -2768,12 +2651,7 @@ describe("OnnxInferenceController", () => {
       const single = setup(undefined, undefined, 1, (w) => {
         w.patchOriginBias = true;
       });
-      await single.controller.loadModel(
-        single.file,
-        "webgpu",
-        undefined,
-        "float16",
-      );
+      await single.controller.loadModel(single.file, "webgpu", "float16");
       const { source: srcSingle } = input();
       const refLeft = await single.controller.run(srcSingle, {
         originZYX: [2, 10, 10],
@@ -2787,12 +2665,7 @@ describe("OnnxInferenceController", () => {
 
       // Single-patch WebGPU run never spawns auxiliary workers.
       const onePatch = setup(undefined, undefined, 3);
-      await onePatch.controller.loadModel(
-        onePatch.file,
-        "webgpu",
-        undefined,
-        "float16",
-      );
+      await onePatch.controller.loadModel(onePatch.file, "webgpu", "float16");
       const { source: srcOne } = input();
       await onePatch.controller.run(srcOne, {
         originZYX: [2, 10, 10],
@@ -2817,12 +2690,7 @@ describe("OnnxInferenceController", () => {
           w.runDelayMs = 3;
         }
       });
-      await pool2.controller.loadModel(
-        pool2.file,
-        "auto",
-        undefined,
-        "float16",
-      );
+      await pool2.controller.loadModel(pool2.file, "auto", "float16");
       expect(pool2.workers).toHaveLength(1);
       expect(pool2.controller.maxConcurrentRuns).toBe(1);
 
@@ -2897,7 +2765,7 @@ describe("OnnxInferenceController", () => {
           }
         },
       );
-      await controller.loadModel(file, "auto", undefined, "float16");
+      await controller.loadModel(file, "auto", "float16");
       const { source } = input();
       const result = await controller.run(source, {
         originZYX: [2, 10, 10],
@@ -2928,7 +2796,7 @@ describe("OnnxInferenceController", () => {
             }
           },
         );
-        await controller.loadModel(file, "webgpu", undefined, "float16");
+        await controller.loadModel(file, "webgpu", "float16");
         const { source } = input();
         const res = await controller.run(source, {
           originZYX: [2, 10, 10],
@@ -2960,7 +2828,7 @@ describe("OnnxInferenceController", () => {
           }
         },
       );
-      await controller.loadModel(file, "webgpu", undefined, "float16");
+      await controller.loadModel(file, "webgpu", "float16");
       const { source } = input();
       await expect(
         controller.run(source, {
@@ -2995,7 +2863,7 @@ describe("OnnxInferenceController", () => {
           w.runDelayMs = 4;
         },
       );
-      await controller.loadModel(file, "webgpu", undefined, "float16");
+      await controller.loadModel(file, "webgpu", "float16");
       const { source } = input();
       const roi = { originZYX: [2, 10, 10], shapeZYX: [16, 60, 60] };
       const result = await controller.run(source, roi);
@@ -3017,7 +2885,7 @@ describe("OnnxInferenceController", () => {
           if (idx === 1) w.outputFailure = "error";
         },
       );
-      await controller.loadModel(file, "webgpu", undefined, "float16");
+      await controller.loadModel(file, "webgpu", "float16");
       const { source } = input();
       const roi = { originZYX: [2, 10, 10], shapeZYX: [16, 60, 60] };
       await expect(controller.run(source, roi)).rejects.toThrow(
@@ -3049,7 +2917,7 @@ describe("OnnxInferenceController", () => {
             };
         },
       );
-      await controller.loadModel(file, "webgpu", undefined, "float16");
+      await controller.loadModel(file, "webgpu", "float16");
       const { source } = input();
       const roi = {
         originZYX: [2, 10, 10],
@@ -3079,7 +2947,7 @@ describe("OnnxInferenceController", () => {
             if (idx === 1) w.holdLoad = true;
           },
         );
-        await controller.loadModel(file, "webgpu", undefined, "float16");
+        await controller.loadModel(file, "webgpu", "float16");
         const { source } = input();
         const pendingRun = controller.run(source, {
           originZYX: [2, 10, 10],
@@ -3118,7 +2986,7 @@ describe("OnnxInferenceController", () => {
           w.runDelayMs = 5;
         },
       );
-      await controller.loadModel(file, "webgpu", undefined, "float16");
+      await controller.loadModel(file, "webgpu", "float16");
       const { source } = input();
       // Public run admission stays serial until the primary's first execution
       // establishes a canonical provider/precision.

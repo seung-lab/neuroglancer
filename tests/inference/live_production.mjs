@@ -56,6 +56,7 @@ const model = bundled
 // Only same-origin requests reach the local HTTP server. Observe the external
 // model independently via Playwright, without routing or mocking its download.
 const requests = [];
+const inferenceAsset = /onnx|inference_worker|ort-wasm|\/models\//;
 const modelPath = "/models/custom.onnx";
 const origin = [-31, 53, 107],
   size = [800, 440, 84];
@@ -488,7 +489,7 @@ try {
     window.viewer.layerManager.managedLayers[0]?.isReady(),
   );
   assert(
-    !requests.some((x) => /onnx|inference_worker|\/models\//.test(x.url)),
+    !requests.some((x) => inferenceAsset.test(x.url)),
     "runtime must be lazy",
   );
   assert.equal(
@@ -531,7 +532,7 @@ try {
     "opening the dialog must not fetch the default model",
   );
   assert(
-    !requests.some((x) => /onnx|inference_worker|\/models\//.test(x.url)),
+    !requests.some((x) => inferenceAsset.test(x.url)),
     "opening the dialog must not fetch model or runtime assets",
   );
   assert.equal(
@@ -580,16 +581,6 @@ try {
     await waitForModel();
     assert.equal(await modelUrl.inputValue(), base + modelPath);
   }
-  if (
-    process.env.COMPATIBILITY_FIXES === "1" ||
-    process.env.EXPECT_PREPARATION === "1"
-  ) {
-    await page
-      .getByLabel("Apply legacy JSEP padding fixes", { exact: true })
-      .check();
-    await waitForModel();
-    ++initialLoads;
-  }
   // Keep the independent half-input-stride/Wu oracle unchanged despite the UI
   // default: this lifecycle deliberately exercises overlapping contributors.
   await overlapToggle.setChecked(true);
@@ -625,14 +616,8 @@ try {
   assert(providerStatus.includes(`Requested: ${provider}`));
   if (first.metadata.fallbackReason)
     assert(providerStatus.includes(first.metadata.fallbackReason));
-  if (first.metadata.preparation)
-    assert(
-      providerStatus.includes(
-        `Browser preparation: ${first.metadata.preparation}`,
-      ),
-    );
-  if (process.env.EXPECT_PREPARATION === "1")
-    assert.equal(first.metadata.preparation, "nooverseg-jsep");
+  assert.equal("compatibilityFixes" in first.metadata, false);
+  assert.equal("preparation" in first.metadata, false);
   const firstCount = await verifyChunks();
   const firstKeys = await assertDemand(first);
   assert(

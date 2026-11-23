@@ -62,9 +62,6 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const LEGACY_JSEP_PADDING_HELP =
-  "Padding workarounds for the older JavaScript WebGPU backend. Not required for the default model on the tested native runtime.";
-
 const metadata: ModelMetadata = {
   inputNames: ["input"],
   outputNames: ["output"],
@@ -1244,16 +1241,6 @@ function precisionToggle(session: OnnxInferenceSession) {
   )!;
 }
 
-function compatibilityToggle(session: OnnxInferenceSession) {
-  return page
-    .elementLocator(session.dialog!.body)
-    .getByRole("checkbox", {
-      name: "Apply legacy JSEP padding fixes",
-      exact: true,
-    })
-    .element() as HTMLInputElement;
-}
-
 function precisionStatus(session: OnnxInferenceSession) {
   return session.dialog!.body.querySelector(
     '[aria-label="Inference precision status"]',
@@ -1305,7 +1292,6 @@ describe("experimental GPU inference precision", () => {
   it("defaults off, reloads the original file on toggle, and retains precision across reopen and provider changes", async () => {
     const { session, controller, fetchModel } = fixture();
     const file = new File(["original model bytes"], "original.onnx");
-    session.compatibilityFixes = true;
     await session.loadModel(file);
     const reference = session.modelReference;
     session.confirmed = true;
@@ -1319,7 +1305,6 @@ describe("experimental GPU inference precision", () => {
     expect(controller.loadModel).toHaveBeenLastCalledWith(
       file,
       "auto",
-      true,
       "float32",
     );
     const loading = deferred<ModelMetadata>();
@@ -1333,7 +1318,6 @@ describe("experimental GPU inference precision", () => {
     expect(controller.loadModel).toHaveBeenLastCalledWith(
       file,
       "auto",
-      true,
       "float16",
     );
     expect(session.busy).toBe(true);
@@ -1366,7 +1350,6 @@ describe("experimental GPU inference precision", () => {
     expect(controller.loadModel).toHaveBeenLastCalledWith(
       file,
       "cpu",
-      true,
       "float16",
     );
     expect(session.modelReference).toBe(reference);
@@ -1376,7 +1359,6 @@ describe("experimental GPU inference precision", () => {
     expect(controller.loadModel).toHaveBeenLastCalledWith(
       file,
       "cpu",
-      true,
       "float32",
     );
     expect(precisionToggle(session).checked).toBe(false);
@@ -1513,8 +1495,6 @@ describe("default ONNX model selection", () => {
     await assertIdle();
     precisionToggle(session).click();
     await assertIdle();
-    compatibilityToggle(session).click();
-    await assertIdle();
     session
       .dialog!.body.querySelector<HTMLInputElement>(
         '[aria-label="Overlap and blend output patches"]',
@@ -1529,7 +1509,6 @@ describe("default ONNX model selection", () => {
     expect(modelUrlInput(session).value).toBe(url);
     expect(session.provider).toBe("cpu");
     expect(precisionToggle(session).checked).toBe(true);
-    expect(session.compatibilityFixes).toBe(true);
     expect(session.overlap).toBe(true);
     await assertIdle();
     fetchModel.mockResolvedValueOnce(new Response("model"));
@@ -1543,7 +1522,6 @@ describe("default ONNX model selection", () => {
     expect(controller.loadModel).toHaveBeenCalledExactlyOnceWith(
       expect.any(File),
       "cpu",
-      true,
       "float16",
     );
   });
@@ -1666,7 +1644,6 @@ describe("default ONNX model selection", () => {
     expect(controller.loadModel).toHaveBeenLastCalledWith(
       file,
       "cpu",
-      false,
       "float32",
     );
     expect(session.modelReference).toEqual({
@@ -1688,7 +1665,6 @@ describe("default ONNX model selection", () => {
     expect(controller.loadModel).toHaveBeenCalledExactlyOnceWith(
       file,
       "auto",
-      false,
       "float32",
     );
     expect(session.modelReference).toEqual({
@@ -1810,7 +1786,6 @@ describe("default ONNX model selection", () => {
       expect(controller.loadModel).toHaveBeenLastCalledWith(
         defaultFile,
         "auto",
-        false,
         "float32",
       );
       const status = session.status;
@@ -1984,7 +1959,7 @@ describe("default ONNX model selection", () => {
       const [file, requestedProvider] = controller.loadModel.mock.calls[0];
       expect(await file.text()).toBe("model");
       expect(requestedProvider).toBe(setting === "provider" ? "cpu" : "auto");
-      expect(controller.loadModel.mock.calls[0][3]).toBe(
+      expect(controller.loadModel.mock.calls[0][2]).toBe(
         setting === "precision" ? "float16" : "float32",
       );
       const reference = session.modelReference;
@@ -1993,7 +1968,6 @@ describe("default ONNX model selection", () => {
         expect(controller.loadModel).toHaveBeenLastCalledWith(
           file,
           "auto",
-          false,
           "float32",
         );
         expect(session.modelReference).toBe(reference);
@@ -2153,7 +2127,6 @@ describe("custom ONNX model URLs", () => {
       expect(controller.loadModel).toHaveBeenLastCalledWith(
         file,
         "cpu",
-        false,
         precision,
       );
       expect(fetchModel).toHaveBeenCalledOnce();
@@ -2536,7 +2509,7 @@ describe("custom ONNX model URLs", () => {
       expect(controller.loadModel.mock.calls[0][1]).toBe(
         setting === "provider" ? "cpu" : "auto",
       );
-      expect(controller.loadModel.mock.calls[0][3]).toBe(
+      expect(controller.loadModel.mock.calls[0][2]).toBe(
         setting === "precision" ? "float16" : "float32",
       );
       expect(session.modelReference).toMatchObject({
@@ -2576,7 +2549,7 @@ describe("ONNX main status visibility and severity", () => {
     const { content, header, body, footer } = session.dialog!;
     content.style.maxHeight = "360px";
     for (const details of body.querySelectorAll("details")) details.open = true;
-    expect(body.querySelectorAll("details[open]")).toHaveLength(5);
+    expect(body.querySelectorAll("details[open]")).toHaveLength(4);
     const status = content.querySelector<HTMLElement>('[role="status"]')!;
     await vi.waitFor(() => {
       expect(body.clientHeight).toBeGreaterThan(0);
@@ -2699,9 +2672,7 @@ describe("ONNX main status visibility and severity", () => {
     controller.loadModel.mockReturnValueOnce(pending.promise);
     const loading = session.loadModel(file);
     expect(session.busy).toBe(true);
-    expect(session.status).toBe(
-      "Loading model and analyzing WebGPU compatibility in background…",
-    );
+    expect(session.status).toBe("Loading model in background…");
     expectStatus(session, "info");
     pending.resolve(metadata);
     await loading;
@@ -2775,9 +2746,7 @@ describe("ONNX main status visibility and severity", () => {
     ]);
     expect(session.busy).toBe(true);
     expect(session.downloadingModel).toBe(false);
-    expect(session.status).toBe(
-      "Loading model and analyzing WebGPU compatibility in background…",
-    );
+    expect(session.status).toBe("Loading model in background…");
     expectStatus(session, "info");
     pending.resolve(metadata);
     await loading;
@@ -2801,12 +2770,6 @@ describe("ONNX configuration disclosure sections", () => {
       title: "Experimental FP16 details",
       paragraphs: [
         "Experimental FP16 changes model arithmetic and can affect predictions. Enabling this attempts conversion for any model, including unverified exports; public input/output stay FP32. Unsupported models may still fail conversion or execution. Requires the browser's shader-f16 feature. This option cannot enable Chrome startup flags. Missing support or a first-execution failure retries FP32 with a visible reason; inaccurate finite outputs cannot be detected automatically. CPU always uses FP32.",
-      ],
-    },
-    {
-      title: "Legacy JSEP padding details",
-      paragraphs: [
-        `${LEGACY_JSEP_PADDING_HELP} Model compatibility analysis: load a model to check for verified legacy JSEP padding fixes.`,
       ],
     },
     {
@@ -2845,7 +2808,9 @@ describe("ONNX configuration disclosure sections", () => {
     async ({ title, paragraphs }) => {
       const { session } = fixture();
       session.open();
-      expect(session.dialog!.body.querySelectorAll("details")).toHaveLength(5);
+      expect(session.dialog!.body.querySelectorAll("details")).toHaveLength(
+        sections.length,
+      );
       const details = detailsFor(session, title);
       const summary = details.querySelector("summary")!;
       const contents = paragraphs.map((text) => {
@@ -2915,52 +2880,6 @@ describe("ONNX configuration disclosure sections", () => {
     await running;
     assertVisibleControlsAndStatuses();
   });
-
-  it("updates compatibility analysis while closed and shows the latest metadata on expansion", async () => {
-    const { session, controller } = fixture();
-    session.open();
-    const details = detailsFor(session, "Legacy JSEP padding details");
-    const analysis = session.dialog!.body.querySelector(
-      '[aria-label="Model compatibility analysis"]',
-    )!;
-    expect(analysis.closest("details")).toBe(details);
-    expect(visible(analysis)).toBe(false);
-    controller.onMetadata({
-      ...metadata,
-      compatibilityAnalysis: {
-        status: "available",
-        model: "model6280000",
-        fixes: ["Conv SAME_UPPER padding"],
-        message: "Verified model6280000 export: WebGPU fixes available.",
-      },
-    });
-    expect(analysis.textContent).toBe(
-      `${LEGACY_JSEP_PADDING_HELP} Verified model6280000 export: WebGPU fixes available. Fixes: Conv SAME_UPPER padding. Legacy JSEP padding fixes are disabled.`,
-    );
-    expect(details.open).toBe(false);
-    expect(visible(analysis)).toBe(false);
-    controller.onMetadata({
-      ...metadata,
-      compatibilityAnalysis: {
-        status: "unverified",
-        fixes: [],
-        message: "Latest model export is unverified.",
-      },
-    });
-    expect(analysis.textContent).toBe(
-      `${LEGACY_JSEP_PADDING_HELP} Latest model export is unverified.`,
-    );
-    expect(details.open).toBe(false);
-    expect(visible(analysis)).toBe(false);
-    details.querySelector("summary")!.click();
-    await vi.waitFor(() => {
-      expect(details.open).toBe(true);
-      expect(visible(analysis)).toBe(true);
-      expect(analysis.textContent).toBe(
-        `${LEGACY_JSEP_PADDING_HELP} Latest model export is unverified.`,
-      );
-    });
-  });
 });
 
 describe("viewer-owned ONNX UI state", () => {
@@ -2971,7 +2890,7 @@ describe("viewer-owned ONNX UI state", () => {
       const controls = body.querySelectorAll<
         HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
       >("input, select, textarea");
-      expect(controls).toHaveLength(10);
+      expect(controls).toHaveLength(9);
       for (const control of controls) {
         expect(control.labels).toHaveLength(1);
         const label = control.labels![0];
@@ -3373,139 +3292,14 @@ describe("viewer-owned ONNX UI state", () => {
     expect(session.metadata).toEqual(metadata);
   });
 
-  it("analyzes a recognized model without rewriting until its legacy JSEP padding fixes are enabled", async () => {
-    const { session, controller, fetchModel } = fixture();
-    session.metadata = undefined;
+  it("does not expose or save the legacy padding option", async () => {
+    const { session } = fixture();
     session.open();
-    const analysis = () =>
-      session.dialog!.body.querySelector(
-        '[aria-label="Model compatibility analysis"]',
-      )!.textContent;
-    const toggle = () => compatibilityToggle(session);
-    expect(session.compatibilityFixes).toBe(false);
-    expect(toggle().checked).toBe(false);
-    expect(toggle().labels![0].textContent!.trim()).toBe(
-      "Apply legacy JSEP padding fixes",
-    );
-    expect(analysis()).toBe(
-      `${LEGACY_JSEP_PADDING_HELP} Model compatibility analysis: load a model to check for verified legacy JSEP padding fixes.`,
-    );
-    const file = new File(["model"], "model.onnx");
-    const analyzed: ModelMetadata = {
-      ...metadata,
-      compatibilityFixes: false,
-      compatibilityAnalysis: {
-        status: "available",
-        model: "model6280000",
-        fixes: ["Conv SAME_UPPER padding"],
-        message: "Verified model6280000 export: WebGPU fixes available.",
-      },
-    };
-    controller.loadModel.mockResolvedValueOnce(analyzed);
-    await session.loadModel(file);
-    session.confirmed = true;
-    session.open();
-    expect(controller.loadModel).toHaveBeenLastCalledWith(
-      file,
-      "auto",
-      false,
-      "float32",
-    );
-    expect(toggle().checked).toBe(false);
-    expect(analysis()).toBe(
-      `${LEGACY_JSEP_PADDING_HELP} Verified model6280000 export: WebGPU fixes available. Fixes: Conv SAME_UPPER padding. Legacy JSEP padding fixes are disabled.`,
-    );
-    const loading = deferred<ModelMetadata>();
-    controller.loadModel.mockReturnValueOnce(loading.promise);
-    const cancels = controller.cancel.mock.calls.length;
-    toggle().click();
-    expect(session.compatibilityFixes).toBe(true);
-    expect(session.confirmed).toBe(false);
-    expect(session.metadata).toBeUndefined();
-    expect(controller.cancel.mock.calls.length).toBeGreaterThan(cancels);
-    expect(controller.loadModel).toHaveBeenLastCalledWith(
-      file,
-      "auto",
-      true,
-      "float32",
-    );
-    expect(toggle().disabled).toBe(true);
-    loading.resolve({
-      ...analyzed,
-      compatibilityFixes: true,
-      preparation: "model6280000-jsep",
-    });
-    await vi.waitFor(() => expect(session.busy).toBe(false));
-    expect(toggle().checked).toBe(true);
-    expect(analysis()).toBe(
-      `${LEGACY_JSEP_PADDING_HELP} Verified model6280000 export: WebGPU fixes available. Fixes: Conv SAME_UPPER padding. Legacy JSEP padding fixes enabled. CPU uses the original model.`,
-    );
-    expect(session.dialog!.body.textContent).toContain(
-      "Browser preparation: model6280000-jsep",
-    );
-    session.dialog!.close();
-    session.open();
-    expect(toggle().checked).toBe(true);
-    await session.selectProvider("cpu");
-    expect(controller.loadModel).toHaveBeenLastCalledWith(
-      file,
-      "cpu",
-      true,
-      "float32",
-    );
-    expect(fetchModel).not.toHaveBeenCalled();
-    await session.selectCompatibilityFixes(false);
-    expect(controller.loadModel).toHaveBeenLastCalledWith(
-      file,
-      "cpu",
-      false,
-      "float32",
-    );
-    expect(toggle().checked).toBe(false);
+    expect(session.dialog!.body.textContent).not.toContain("JSEP");
+    await session.run();
+    const recipe = vi.mocked(makeInferenceRecipeSource).mock.lastCall![1];
+    expect(recipe).not.toHaveProperty("compatibilityFixes");
   });
-
-  it.each(
-    (["unverified", "already-prepared"] as const).flatMap((status) =>
-      [false, true].map((enabled) => ({ status, enabled })),
-    ),
-  )(
-    "shows $status model analysis without recommending legacy fixes (enabled=$enabled)",
-    ({ status, enabled }) => {
-      const { session, controller } = fixture();
-      expect(session.compatibilityFixes).toBe(false);
-      session.compatibilityFixes = enabled;
-      session.open();
-      controller.onMetadata({
-        ...metadata,
-        compatibilityAnalysis: {
-          status,
-          fixes: [],
-          message: `Analysis: ${status}`,
-        },
-      });
-      const text = session.dialog!.body.querySelector(
-        '[aria-label="Model compatibility analysis"]',
-      )!.textContent;
-      expect(text).toBe(`${LEGACY_JSEP_PADDING_HELP} Analysis: ${status}`);
-      expect(text).not.toContain("Recommendation:");
-      expect(session.compatibilityFixes).toBe(enabled);
-      expect(compatibilityToggle(session).checked).toBe(enabled);
-    },
-  );
-
-  it.each([false, true])(
-    "persists compatibility fixes=%s in the actual outgoing recipe",
-    async (enabled) => {
-      const { session } = fixture();
-      session.compatibilityFixes = enabled;
-      await session.run();
-      const recipe = vi.mocked(makeInferenceRecipeSource).mock.lastCall![1];
-      expect(recipe.compatibilityFixes).toBe(enabled);
-      expect(JSON.parse(JSON.stringify(recipe)).compatibilityFixes).toBe(
-        enabled,
-      );
-    },
-  );
 
   it("reloads provider changes, invalidates confirmation and shows failures instead of stale ready state", async () => {
     const { session, controller } = fixture();
@@ -3533,7 +3327,6 @@ describe("viewer-owned ONNX UI state", () => {
     expect(controller.loadModel).toHaveBeenLastCalledWith(
       file,
       "webgpu",
-      false,
       "float32",
     );
     expect(session.metadata).toBeUndefined();
@@ -3552,7 +3345,6 @@ describe("viewer-owned ONNX UI state", () => {
     expect(controller.loadModel).toHaveBeenLastCalledWith(
       file,
       "cpu",
-      false,
       "float32",
     );
     expect(status()).toContain("Requested: cpu");
@@ -3566,15 +3358,11 @@ describe("viewer-owned ONNX UI state", () => {
       ...metadata,
       actualProvider: "webgpu",
       fallbackReason: undefined,
-      preparation: "nooverseg-jsep",
     };
     controller.onMetadata(gpu);
     expect(session.metadata).toEqual(gpu);
     expect(session.dialog!.body.textContent).toContain(
       "WebGPU (native; CPU kernel fallback disabled)",
-    );
-    expect(session.dialog!.body.textContent).toContain(
-      "Browser preparation: nooverseg-jsep (legacy JSEP padding fixes, in memory).",
     );
     session.dialog!.close();
     controller.onMetadata({
@@ -3589,9 +3377,6 @@ describe("viewer-owned ONNX UI state", () => {
     );
     expect(session.dialog!.body.textContent).toContain(
       "CPU fallback: WebGPU first execution failed: device lost",
-    );
-    expect(session.dialog!.body.textContent).not.toContain(
-      "Browser preparation:",
     );
     // A later worker reload can choose GPU again; no stale CPU fallback text.
     controller.onMetadata(gpu);

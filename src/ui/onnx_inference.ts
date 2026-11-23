@@ -225,7 +225,6 @@ export class OnnxInferenceSession extends RefCounted {
   modelReference: InferenceRecipe["model"] | undefined;
   provider: InferenceProvider = "auto";
   precision: InferencePrecision = "float32";
-  compatibilityFixes = false;
   overlap = false;
   private modelFile: File | undefined;
   private bundledFile: File | undefined;
@@ -585,27 +584,6 @@ export class OnnxInferenceSession extends RefCounted {
     );
   }
 
-  async selectCompatibilityFixes(enabled: boolean) {
-    if (enabled === this.compatibilityFixes) return;
-    const wasDownloading = this.downloadingModel;
-    const pendingModelUrl = this.pendingModelUrl;
-    this.compatibilityFixes = enabled;
-    this.invalidate(
-      "Compatibility fixes changed; reload and confirm settings.",
-      "warning",
-    );
-    this.controller.cancel();
-    this.metadata = undefined;
-    this.changed.dispatch();
-    if (this.modelFile !== undefined)
-      await this.loadModel(this.modelFile, this.modelReference);
-    else if (wasDownloading) {
-      if (pendingModelUrl !== undefined)
-        await this.loadModelUrl(pendingModelUrl);
-      else await this.loadBundledModel();
-    }
-  }
-
   async loadBundledModel() {
     const model = this.dependencies.bundledModel;
     if (!this.alive || model === undefined || this.downloadingModel) return;
@@ -797,9 +775,7 @@ export class OnnxInferenceSession extends RefCounted {
     },
   ) {
     if (!this.alive) return;
-    this.invalidate(
-      "Loading model and analyzing WebGPU compatibility in background…",
-    );
+    this.invalidate("Loading model in background…");
     if (this.modelFile !== file) {
       this.outputSpacing = "";
       this.outputSpacingEdited = false;
@@ -815,7 +791,6 @@ export class OnnxInferenceSession extends RefCounted {
       const metadata = await this.controller.loadModel(
         file,
         this.provider,
-        this.compatibilityFixes,
         this.precision,
       );
       if (!this.alive || generation !== this.generation) return;
@@ -882,7 +857,6 @@ export class OnnxInferenceSession extends RefCounted {
         model: this.modelReference,
         provider: this.provider,
         precision: this.precision,
-        compatibilityFixes: this.compatibilityFixes,
         overlap: this.overlap,
         mode: "live",
         spacingZYX: input.spacingZYX,
@@ -1166,18 +1140,6 @@ export class OnnxInferenceDialog extends FramedDialog {
       "Experimental FP16 details",
       "Experimental FP16 changes model arithmetic and can affect predictions. Enabling this attempts conversion for any model, including unverified exports; public input/output stay FP32. Unsupported models may still fail conversion or execution. Requires the browser's shader-f16 feature. This option cannot enable Chrome startup flags. Missing support or a first-execution failure retries FP32 with a visible reason; inaccurate finite outputs cannot be detected automatically. CPU always uses FP32.",
     );
-    const compatibility = document.createElement("input");
-    compatibility.type = "checkbox";
-    row("Apply legacy JSEP padding fixes", compatibility);
-    compatibility.addEventListener(
-      "change",
-      () => void session.selectCompatibilityFixes(compatibility.checked),
-    );
-    const compatibilityStatus = addDetails("Legacy JSEP padding details");
-    compatibilityStatus.setAttribute(
-      "aria-label",
-      "Model compatibility analysis",
-    );
     const overlap = document.createElement("input");
     overlap.type = "checkbox";
     overlap.setAttribute("aria-label", "Overlap and blend output patches");
@@ -1267,20 +1229,13 @@ export class OnnxInferenceDialog extends FramedDialog {
       providerStatus.textContent =
         metadata === undefined
           ? `Requested: ${session.provider}. Runtime not initialized.`
-          : `Requested: ${metadata.requestedProvider}; last initialized provider: ${metadata.actualProvider === "wasm" ? "CPU (WASM)" : "WebGPU (native; CPU kernel fallback disabled)"}.${metadata.actualProvider !== "wasm" ? "" : ` WASM threads: ${metadata.threads}.`}${metadata.fallbackReason === undefined ? "" : ` CPU fallback: ${metadata.fallbackReason}`}${metadata.preparation === undefined ? "" : ` Browser preparation: ${metadata.preparation} (legacy JSEP padding fixes, in memory).`}`;
+          : `Requested: ${metadata.requestedProvider}; last initialized provider: ${metadata.actualProvider === "wasm" ? "CPU (WASM)" : "WebGPU (native; CPU kernel fallback disabled)"}.${metadata.actualProvider !== "wasm" ? "" : ` WASM threads: ${metadata.threads}.`}${metadata.fallbackReason === undefined ? "" : ` CPU fallback: ${metadata.fallbackReason}`}`;
       precision.checked = session.precision === "float16";
       precisionStatus.textContent =
         metadata === undefined
           ? `Requested precision: ${session.precision === "float16" ? "FP16 (experimental GPU)" : "FP32"}. Runtime not initialized.`
           : `Requested precision: ${(metadata.requestedPrecision ?? "float32") === "float16" ? "FP16 (experimental GPU)" : "FP32"}; last initialized precision: ${(metadata.actualPrecision ?? "float32") === "float16" ? "FP16 (public I/O FP32)" : "FP32"}.${metadata.precisionFallbackReason === undefined ? "" : ` FP32 fallback: ${metadata.precisionFallbackReason}`}`;
-      compatibility.checked = session.compatibilityFixes;
       overlap.checked = session.overlap;
-      const analysis = metadata?.compatibilityAnalysis;
-      compatibilityStatus.textContent =
-        "Padding workarounds for the older JavaScript WebGPU backend. Not required for the default model on the tested native runtime. " +
-        (analysis === undefined
-          ? "Model compatibility analysis: load a model to check for verified legacy JSEP padding fixes."
-          : `${analysis.message}${analysis.fixes.length === 0 ? "" : ` Fixes: ${analysis.fixes.join("; ")}.`}${analysis.status !== "available" ? "" : session.compatibilityFixes ? " Legacy JSEP padding fixes enabled. CPU uses the original model." : " Legacy JSEP padding fixes are disabled."}`);
       const input = session.input;
       const sourceMetadata = session.sourceMetadata;
       currentSpacing.textContent =
@@ -1370,7 +1325,6 @@ export class OnnxInferenceDialog extends FramedDialog {
         locked && !session.downloadingModel;
       provider.disabled = locked && !session.downloadingModel;
       precision.disabled = locked && !session.downloadingModel;
-      compatibility.disabled = locked;
       overlap.disabled = locked;
       run.disabled =
         locked ||

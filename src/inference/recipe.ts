@@ -43,7 +43,7 @@ interface InferenceRecipeCommon {
   provider: InferenceProvider;
   /** Experimental internal FP16; absent retains FP32. I/O remains float32. */
   precision?: InferencePrecision;
-  /** Absent retains the legacy old-model-only automatic GPU fixes policy. */
+  /** Deprecated: accepted in old shared links but ignored at runtime. */
   compatibilityFixes?: boolean;
   /** Absent retains overlapping-context blending, as in legacy recipes. */
   overlap?: boolean;

@@ -60,7 +60,6 @@ const root = fileURLToPath(new URL("../../", import.meta.url));
 const dist = path.join(root, "dist/client");
 const timeout = Number(process.env.TIMEOUT || 120000);
 const provider = process.env.PROVIDER || "cpu";
-const compatibilityFixes = process.env.COMPATIBILITY_FIXES === "1";
 assert(["cpu", "auto", "webgpu"].includes(provider));
 const deterministic = !process.env.MODEL;
 const modelBytes = process.env.MODEL
@@ -351,40 +350,11 @@ try {
       await page.locator("[role=status]").textContent(),
       /Model ready/,
     );
-    const toggle = page.getByLabel("Apply legacy JSEP padding fixes", {
-      exact: true,
-    });
-    assert.equal(
-      await toggle.isChecked(),
-      false,
-      "new configurations are opt-in",
-    );
-    const analysis = page.getByLabel("Model compatibility analysis", {
-      exact: true,
-    });
-    assert(
-      (await analysis.textContent()).startsWith(
-        "Padding workarounds for the older JavaScript WebGPU backend. Not required for the default model on the tested native runtime. ",
-      ),
-    );
-    assert.doesNotMatch(await analysis.textContent(), /Recommendation:/);
-    if (compatibilityFixes) {
-      assert.match(
-        await analysis.textContent(),
-        /Legacy JSEP padding fixes are disabled\./,
-      );
-      await toggle.check();
-      await page.waitForFunction(() =>
-        document
-          .querySelector("[role=status]")
-          ?.textContent?.includes("Model ready"),
-      );
-      assert.equal(await toggle.isChecked(), true);
-      assert.match(
-        await analysis.textContent(),
-        /Legacy JSEP padding fixes enabled\. CPU uses the original model\./,
-      );
-    }
+    for (const label of [
+      "Apply legacy JSEP padding fixes",
+      "Model compatibility analysis",
+    ])
+      assert.equal(await page.getByLabel(label, { exact: true }).count(), 0);
     const overlapToggle = page.getByLabel("Overlap and blend output patches", {
       exact: true,
     });
@@ -404,9 +374,8 @@ try {
       assert.deepEqual(p.metadata.outputNames, ["prediction"]);
     }
     assert.equal(p.metadata.requestedProvider, provider);
-    assert.equal(p.metadata.compatibilityFixes, compatibilityFixes);
-    if (compatibilityFixes && provider !== "cpu")
-      assert.equal(p.metadata.preparation, "model6280000-jsep");
+    assert.equal("compatibilityFixes" in p.metadata, false);
+    assert.equal("preparation" in p.metadata, false);
     if (provider === "cpu") assert.equal(p.metadata.actualProvider, "wasm");
     const geometry = await page
       .getByLabel("Model geometry", { exact: true })
@@ -779,7 +748,7 @@ try {
   );
   assert.equal(recipe.mode, "live");
   assert.equal(recipe.provider, provider);
-  assert.equal(recipe.compatibilityFixes, compatibilityFixes);
+  assert.equal("compatibilityFixes" in recipe, false);
   assert.equal(
     recipe.overlap,
     overlap,
@@ -934,7 +903,6 @@ try {
   console.log("PASS dynamic production", {
     model: deterministic ? "inline Concat Z×3" : process.env.MODEL,
     provider,
-    compatibilityFixes,
     overlap,
     initialLivePatches: firstProbe.runs,
     liveBoundsXYZ,

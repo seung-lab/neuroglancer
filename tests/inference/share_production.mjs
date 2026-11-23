@@ -305,6 +305,8 @@ try {
           if (data.kind === "load") {
             this.inference = true;
             ++window.shareProbe.loads;
+            if ("compatibilityFixes" in data)
+              throw new Error("Legacy recipe flag leaked into the worker load");
           }
           if (this.inference && data.kind === "run") {
             ++window.shareProbe.runs;
@@ -534,7 +536,6 @@ try {
     version: 2,
     profile: "ncdhw-centered-v2",
     precision: "float32",
-    compatibilityFixes: false,
     inputScaleIndex: 0,
     overlap: true,
     outputSpacingZYX: [...recipe.spacingZYX],
@@ -654,8 +655,10 @@ try {
     "UI custom model URL -> copied recipe -> isolated numerical output verified",
   );
 
+  // An old link may carry the flag, but it must not affect worker execution.
+  const legacyRecipe = { ...recipe, compatibilityFixes: true };
   const getsBefore = modelGets();
-  const first = await open(stateUrl(makeState(recipe)));
+  const first = await open(stateUrl(makeState(legacyRecipe)));
   const initial = await settle(first.page);
   assert.equal(initial.loads, 1);
   assert.equal(
@@ -664,6 +667,8 @@ try {
     "first URL restore fetches the model",
   );
   assert.equal(initial.metadata.requestedProvider, provider);
+  assert.equal("compatibilityFixes" in initial.metadata, false);
+  assert.equal("preparation" in initial.metadata, false);
   if (provider !== "auto")
     assert.equal(
       initial.metadata.actualProvider,
@@ -677,7 +682,7 @@ try {
   // Make the URL binding write a fresh state, retaining non-default settings.
   await position(first.page, [0, 83, 117]);
   await settle(first.page);
-  const url = await copiedUrl(first.page, recipe);
+  const url = await copiedUrl(first.page, legacyRecipe);
   await first.page.evaluate(() => window.viewer.state.reset());
   await assertStopped(first.page, initial);
   assert.deepEqual(first.errors, []);
@@ -703,7 +708,7 @@ try {
     "fresh context re-reads serialized input source",
   );
   await verifyOutput(second.page, recipe);
-  verifyJson(await snapshot(second.page), recipe);
+  verifyJson(await snapshot(second.page), legacyRecipe);
   // Deleting the unrelated replacement must not invalidate the recipe's input.
   await remove(second.page, recipe.source.name);
   const beforePan = await probe(second.page);
@@ -720,7 +725,7 @@ try {
     "pan computes previously unseen native chunks",
   );
   assert(panned.runs > restored.runs);
-  verifyJson(await snapshot(second.page), recipe);
+  verifyJson(await snapshot(second.page), legacyRecipe);
   await remove(second.page, resultName);
   await assertStopped(second.page, panned);
   assert.deepEqual(second.errors, []);
