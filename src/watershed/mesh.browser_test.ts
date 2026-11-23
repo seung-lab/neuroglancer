@@ -37,6 +37,7 @@ import { makeMinimalViewer } from "#src/ui/minimal_viewer.js";
 import { bindWatershed } from "#src/ui/watershed.js";
 import * as matrix from "#src/util/matrix.js";
 import type { Viewer } from "#src/viewer.js";
+import type { WatershedParametersState } from "#src/watershed/parameters.js";
 import type { WatershedRecipe } from "#src/watershed/recipe.js";
 import { mswFixture } from "#tests/fixtures/msw_browser.js";
 
@@ -436,11 +437,10 @@ describe("selected live watershed meshes (real Viewer, Chrome and WASM)", () => 
     expect(out.volumeLayer.multiscaleSource).toBe(out.volume);
     expect(chunks).toEqual(["10-15_20-23_-3-0"]);
 
-    // A real watershed-parameter edit, unlike the identical restore above,
-    // starts a new label epoch and resets visible AND starred-only IDs.
-    const state = out.dataSource.state!;
-    const previous = state.toJSON() as WatershedRecipe;
-    state.restoreState({
+    // Reseg starts a new epoch and resets visible AND starred-only IDs.
+    const state = out.dataSource.state as WatershedParametersState;
+    const previous = state.toJSON();
+    state.resegment({
       ...previous,
       options: { ...previous.options, dustThreshold: 1 },
     });
@@ -478,7 +478,7 @@ describe("selected live watershed meshes (real Viewer, Chrome and WASM)", () => 
     expect(out.volumeLayer.multiscaleSource).toBe(out.volume);
   }, 120_000);
 
-  it("preserves clipped native vertices and clears both selection sets on a non-contained viewport", async () => {
+  it("preserves clipped native vertices and clears both selection sets only after Reseg on a non-contained viewport", async () => {
     const { viewer, result, live, jobs } = await fixture("clipped", {
       shapeXYZ: [133, 3, 3],
       splitX: 66,
@@ -525,6 +525,12 @@ describe("selected live watershed meshes (real Viewer, Chrome and WASM)", () => 
     // Expand the actual Viewer viewport beyond the old completed ROI/halo.
     // Keep the split in view so the same final numeric ID has a known surface.
     viewer.crossSectionScale.value = 2;
+    await settle(viewer);
+    expect(live.epoch).toBe(epoch);
+    expect([...out.group.visibleSegments]).toEqual([1n]);
+    expect([...out.group.selectedSegments].sort()).toEqual([1n, 2n]);
+    const state = out.dataSource.state as WatershedParametersState;
+    state.resegment(state.toJSON());
     await expect.poll(() => live.epoch).toBeGreaterThan(epoch);
     expect(resets.length).toBeGreaterThan(0);
     for (const reset of resets) {
@@ -724,9 +730,9 @@ describe("selected live watershed meshes (real Viewer, Chrome and WASM)", () => 
     const firstEpoch = live.epoch;
     const firstSnapshotCount = jobs.snapshots.length;
     const firstGeneration = out.meshSource.state.value.generation;
-    const state = out.dataSource.state!;
-    const recipe = state.toJSON() as WatershedRecipe;
-    state.restoreState({
+    const state = out.dataSource.state as WatershedParametersState;
+    const recipe = state.toJSON();
+    state.resegment({
       ...recipe,
       options: { ...recipe.options, aggThreshold: 0.2 },
     });
@@ -784,7 +790,7 @@ describe("selected live watershed meshes (real Viewer, Chrome and WASM)", () => 
     out.group.selectedSegments.add(2n);
     const mergedEpoch = live.epoch;
     const mergedGeneration = out.meshSource.state.value.generation;
-    state.restoreState(recipe);
+    state.resegment(recipe);
     expect(live.epoch).toBeGreaterThan(mergedEpoch);
     expect(out.meshSource.state.value.generation).toBeGreaterThan(
       mergedGeneration,
@@ -819,7 +825,7 @@ describe("selected live watershed meshes (real Viewer, Chrome and WASM)", () => 
     expect(jobs.watershed).toHaveLength(3);
     expectIdentityAndUnrelatedSelection();
 
-    // Identical parameters preserve the fresh selection and cached geometry.
+    // Restoring identical parameters without Reseg preserves the fresh picks.
     const counts = [
       jobs.watershed.length,
       jobs.mesh.length,

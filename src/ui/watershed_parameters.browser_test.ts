@@ -99,6 +99,12 @@ function error(widget: WatershedParametersWidget) {
   return widget.element.querySelector<HTMLElement>('[role="alert"]')!;
 }
 
+function resegButton(widget: WatershedParametersWidget) {
+  const button = widget.element.querySelector("button")!;
+  expect(button.textContent).toBe("Reseg");
+  return button;
+}
+
 async function fill(
   widget: WatershedParametersWidget,
   label: string,
@@ -107,14 +113,14 @@ async function fill(
   const element = input(widget, label);
   expect(element.type).toBe("number");
   await userEvent.fill(element, text);
-  await vi.advanceTimersByTimeAsync(250);
+  resegButton(widget).click();
 }
 
 async function toggle(widget: WatershedParametersWidget, label: string) {
   const element = input(widget, label);
   expect(element.type).toBe("checkbox");
   await userEvent.click(element);
-  await vi.advanceTimersByTimeAsync(250);
+  resegButton(widget).click();
 }
 
 function expectOptionalEnabled(
@@ -127,119 +133,31 @@ function expectOptionalEnabled(
 }
 
 describe("WatershedParametersWidget", () => {
-  it("waits for 250 ms of inactivity and applies only the latest accumulated edit", async () => {
-    const { widget, apply, accepted } = fixture();
+  it("applies the whole draft only on Reseg, including unchanged retries", async () => {
+    const { widget, apply, original, accepted } = fixture();
     const size = input(widget, "Size threshold");
     const high = input(widget, "High threshold slider");
-    size.value = "60";
-    size.dispatchEvent(new Event("input", { bubbles: true }));
-    expect(size.value).toBe("60");
-    expect(apply).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(200);
+    await userEvent.fill(size, "60");
     high.value = "0.8";
     high.dispatchEvent(new Event("input", { bubbles: true }));
     expect(input(widget, "High threshold").value).toBe("0.8");
-    await vi.advanceTimersByTimeAsync(200);
-    size.value = "70";
-    size.dispatchEvent(new Event("input", { bubbles: true }));
-    size.dispatchEvent(new Event("change", { bubbles: true }));
-    await vi.advanceTimersByTimeAsync(249);
+    await userEvent.click(input(widget, MASK));
+    await userEvent.fill(input(widget, "Mask threshold"), "0");
+    widget.setRecipe(structuredClone(original));
+    expect(size.value).toBe("60");
+    await vi.advanceTimersByTimeAsync(1000);
     expect(apply).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(1);
+
+    await userEvent.click(resegButton(widget));
     expect(apply).toHaveBeenCalledOnce();
     expect(accepted().options).toMatchObject({
       highThreshold: 0.8,
-      sizeThreshold: 70,
+      sizeThreshold: 60,
+      maskThreshold: 0,
     });
-    await vi.advanceTimersByTimeAsync(1000);
-    expect(apply).toHaveBeenCalledOnce();
-  });
-
-  it.each(["invalid", "unchanged"])(
-    "cancels a queued edit when the final draft is %s",
-    async (finalDraft) => {
-      const { widget, apply, original } = fixture();
-      const size = input(widget, "Size threshold");
-      size.value = "60";
-      size.dispatchEvent(new Event("input", { bubbles: true }));
-      await vi.advanceTimersByTimeAsync(200);
-      size.value = finalDraft === "invalid" ? "" : "50";
-      size.dispatchEvent(new Event("input", { bubbles: true }));
-      expect(error(widget).hidden).toBe(finalDraft !== "invalid");
-      await vi.advanceTimersByTimeAsync(1000);
-      expect(apply).not.toHaveBeenCalled();
-      expect(original).toEqual(makeRecipe());
-    },
-  );
-
-  it.each(["disable", "dispose", "external recipe", "invalid external recipe"])(
-    "cancels pending edits on %s",
-    async (action) => {
-      const { widget, apply } = fixture();
-      const size = input(widget, "Size threshold");
-      size.value = "60";
-      size.dispatchEvent(new Event("input", { bubbles: true }));
-      await vi.advanceTimersByTimeAsync(200);
-      if (action === "disable") {
-        widget.setEnabled(false);
-        widget.setEnabled(true);
-      } else if (action === "dispose") {
-        widget.dispose();
-      } else if (action === "external recipe") {
-        widget.setRecipe({
-          ...makeRecipe(),
-          options: { ...DEFAULT_WATERSHED_OPTIONS, sizeThreshold: 90 },
-        });
-        expect(size.value).toBe("90");
-      } else {
-        widget.setRecipe({
-          ...makeRecipe(),
-          options: { ...DEFAULT_WATERSHED_OPTIONS, sizeThreshold: -1 },
-        });
-        expect(error(widget).hidden).toBe(false);
-      }
-      await vi.advanceTimersByTimeAsync(1000);
-      expect(apply).not.toHaveBeenCalled();
-    },
-  );
-
-  it.each([
-    [MASK, "Mask threshold", "maskThreshold"],
-    [AGGLOMERATE, AGG, "aggThreshold"],
-  ] as const)(
-    "coalesces enabling %s and adjusting its threshold to zero",
-    async (checkbox, title, option) => {
-      const { widget, apply, accepted } = fixture();
-      const enabled = input(widget, checkbox);
-      enabled.checked = true;
-      enabled.dispatchEvent(new Event("change", { bubbles: true }));
-      expectOptionalEnabled(widget, title, true);
-      expect(apply).not.toHaveBeenCalled();
-      await vi.advanceTimersByTimeAsync(200);
-      const threshold = input(widget, title);
-      threshold.value = "0";
-      threshold.dispatchEvent(new Event("input", { bubbles: true }));
-      await vi.advanceTimersByTimeAsync(249);
-      expect(apply).not.toHaveBeenCalled();
-      await vi.advanceTimersByTimeAsync(1);
-      expect(apply).toHaveBeenCalledOnce();
-      expect(accepted().options[option]).toBe(0);
-    },
-  );
-
-  it("keeps pending edits through identical model refreshes", async () => {
-    const { widget, apply, original, accepted } = fixture();
-    const size = input(widget, "Size threshold");
-    size.value = "60";
-    size.dispatchEvent(new Event("input", { bubbles: true }));
-    await vi.advanceTimersByTimeAsync(200);
-    widget.setRecipe(structuredClone(original));
-    expect(size.value).toBe("60");
-    await vi.advanceTimersByTimeAsync(49);
-    expect(apply).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(1);
-    expect(apply).toHaveBeenCalledOnce();
-    expect(accepted().options.sizeThreshold).toBe(60);
+    resegButton(widget).click();
+    expect(apply).toHaveBeenCalledTimes(2);
+    expect(apply.mock.calls[1][0]).toEqual(apply.mock.calls[0][0]);
   });
 
   it("shows precise defaults and read-only native context without writing", () => {
@@ -405,11 +323,11 @@ describe("WatershedParametersWidget", () => {
         key === "sizeThreshold" || key === "dustThreshold" ? 1 : 0.01;
       spinner.focus();
       await userEvent.keyboard("{ArrowUp}");
-      await vi.advanceTimersByTimeAsync(250);
+      resegButton(widget).click();
       expect(spinner.valueAsNumber).toBeCloseTo(initial + step, 12);
       expect(accepted().options[key]).toBeCloseTo(initial + step, 12);
       await userEvent.keyboard("{ArrowDown}");
-      await vi.advanceTimersByTimeAsync(250);
+      resegButton(widget).click();
       expect(spinner.valueAsNumber).toBeCloseTo(initial, 12);
       expect(accepted().options[key]).toBeCloseTo(initial, 12);
     }
@@ -434,7 +352,7 @@ describe("WatershedParametersWidget", () => {
       slider.focus();
       // Playwright sends native keys to Chrome, not synthetic input events.
       await userEvent.keyboard(key);
-      await vi.advanceTimersByTimeAsync(250);
+      resegButton(widget).click();
       expect(slider.valueAsNumber).toBe(value);
       expect(input(widget, title).valueAsNumber).toBe(value);
       expect(get(accepted())).toBe(value);
@@ -644,10 +562,7 @@ describe("WatershedParametersWidget", () => {
     expect(error(widget).textContent).toBe("Producer is not ready");
     expect(accepted()).toBe(before);
     fail = false;
-    input(widget, "Size threshold").dispatchEvent(
-      new Event("change", { bubbles: true }),
-    );
-    await vi.advanceTimersByTimeAsync(250);
+    resegButton(widget).click();
     expect(apply).toHaveBeenCalledTimes(2);
     expect(accepted().options.sizeThreshold).toBe(81);
     expect(error(widget).hidden).toBe(true);
@@ -708,6 +623,8 @@ describe("WatershedParametersWidget", () => {
     await fill(widget, "Size threshold", "99");
     const count = apply.mock.calls.length;
     widget.setEnabled(false);
+    expect(resegButton(widget).disabled).toBe(true);
+    resegButton(widget).click();
     for (const element of widget.element.querySelectorAll("input")) {
       expect(element.disabled).toBe(true);
     }
@@ -724,6 +641,7 @@ describe("WatershedParametersWidget", () => {
       expect(element.disabled).toBe(true);
     }
     widget.setEnabled(true);
+    expect(resegButton(widget).disabled).toBe(false);
     expect(input(widget, "Size threshold").disabled).toBe(false);
     expect(input(widget, MASK).disabled).toBe(false);
     expectOptionalEnabled(widget, "Mask threshold", false);
@@ -756,12 +674,14 @@ describe("WatershedParametersWidget", () => {
   it("removes its DOM and every input/change listener on disposal", async () => {
     const { widget, host, apply } = fixture();
     const controls = Array.from(widget.element.querySelectorAll("input"));
+    const reseg = resegButton(widget);
     await fill(widget, "Size threshold", "83");
     const count = apply.mock.calls.length;
     widget.dispose();
     expect(widget.wasDisposed).toBe(true);
     expect(widget.element.isConnected).toBe(false);
     expect(host.children).toHaveLength(0);
+    reseg.click();
     for (const control of controls) {
       if (control.type === "checkbox") control.checked = !control.checked;
       else control.value = "1";

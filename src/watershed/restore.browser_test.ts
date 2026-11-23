@@ -622,7 +622,7 @@ describe("watershed recipe datasource restoration", () => {
     },
   );
 
-  it("attaches viewport demand lazily, waits for affinities, and clears on detach", async () => {
+  it("attaches viewport demand lazily, waits for affinities, and retains labels on detach", async () => {
     const f = fixture();
     let resolveAffinities!: (value: Float32Array) => void;
     vi.mocked(f.input.readRegion).mockReturnValue(
@@ -671,8 +671,8 @@ describe("watershed recipe datasource restoration", () => {
     detach();
     expect(removeWatch).toHaveBeenCalledOnce();
     expect(
-      (await live.readTile([0, 0, 0], [20, 12, 10], f.abort.signal)).every(
-        (label) => label === 0n,
+      (await live.readTile([0, 0, 0], [20, 12, 10], f.abort.signal)).some(
+        (label) => label === 7n,
       ),
     ).toBe(true);
     expect(f.input.dispose).not.toHaveBeenCalled();
@@ -684,26 +684,23 @@ describe("watershed recipe datasource restoration", () => {
     const f = fixture();
     const baseline = statusMessages.size;
     const restored = await restoreWatershedRecipe(f.options, f.recipe);
-    const setRegion = vi.spyOn(latestLive(), "setRegion");
+    const setViewport = vi.spyOn(latestLive(), "setViewport");
     const firstDetach = restored.attach(makeOutput());
     const firstWatch = latestWatch();
     const firstRemove = vi.mocked(watchWatershedViewport).mock.results[0].value;
     const secondDetach = restored.attach(makeOutput());
     expect(firstRemove).toHaveBeenCalledOnce();
-    expect(setRegion).toHaveBeenLastCalledWith();
-    setRegion.mockClear();
+    expect(setViewport).toHaveBeenLastCalledWith(undefined);
+    setViewport.mockClear();
     firstWatch[3](region);
     firstWatch[4](new Error("obsolete output error"));
     firstDetach();
-    expect(setRegion).not.toHaveBeenCalled();
+    expect(setViewport).not.toHaveBeenCalled();
     expect(statusMessages.size).toBe(baseline);
     latestWatch()[3](region);
-    expect(setRegion).toHaveBeenCalledExactlyOnceWith(
-      region.lowerXYZ,
-      region.shapeXYZ,
-    );
+    expect(setViewport).toHaveBeenCalledExactlyOnceWith(region);
     secondDetach();
-    expect(setRegion).toHaveBeenLastCalledWith();
+    expect(setViewport).toHaveBeenLastCalledWith(undefined);
     restored.dispose();
     restored.attach(makeOutput());
     expect(watchWatershedViewport).toHaveBeenCalledTimes(2);
@@ -821,7 +818,7 @@ describe("watershed recipe datasource restoration", () => {
     expect(mesh.selection).toBeUndefined();
     expect(selection.wasDisposed).toBe(true);
     expect(unwatch).toHaveBeenCalledOnce();
-    expect(live.hasCompletedResult).toBe(false);
+    expect(live.hasCompletedResult).toBe(true);
     expect(f.input.dispose).not.toHaveBeenCalled();
     const detachedGeneration = mesh.state.value.generation;
     visibleSegments.delete(7n);
@@ -927,7 +924,7 @@ describe("watershed recipe datasource restoration", () => {
     },
   );
 
-  it("keeps viewport and compute errors recoverable, reporting again after recovery", async () => {
+  it("retries an initial compute error only after explicit resegmentation", async () => {
     const f = fixture();
     const baseline = statusMessages.size;
     const restored = await restoreWatershedRecipe(f.options, f.recipe);
@@ -950,7 +947,12 @@ describe("watershed recipe datasource restoration", () => {
     );
     await publicationIsAlive(f.options, restored.url);
     expect(latestLive().signal.aborted).toBe(false);
+    const live = latestLive();
+    const epoch = live.epoch;
     onRegion({ lowerXYZ: [11, 8, 8], shapeXYZ: [2, 2, 1] });
+    expect(live.epoch).toBe(epoch);
+    expect(requestAsyncComputation).toHaveBeenCalledOnce();
+    live.resegment(f.recipe.channelsXYZ, f.recipe.options, f.recipe.halo);
     await vi.waitFor(() =>
       expect(requestAsyncComputation).toHaveBeenCalledTimes(2),
     );
@@ -963,10 +965,9 @@ describe("watershed recipe datasource restoration", () => {
       expect(tile.some((label) => label === 7n)).toBe(true);
     });
     onError(new Error("second viewport error after a successful compute"));
-    expect([...statusMessages].at(-1)?.element.textContent).toContain(
-      "second viewport error",
-    );
-    expect(statusMessages.size).toBe(baseline + 1);
+    expect(live.hasCompletedResult).toBe(true);
+    expect(requestAsyncComputation).toHaveBeenCalledTimes(2);
+    expect(statusMessages.size).toBe(baseline);
     detach();
     restored.dispose();
     expect(statusMessages.size).toBe(baseline);
@@ -1262,7 +1263,7 @@ describe("live watershed recipe parameter state", () => {
     const resultId = source.resultId;
     const modelTransform = data.modelTransform;
     const original = state.toJSON();
-    const setParameters = vi.spyOn(live, "setParameters");
+    const resegment = vi.spyOn(live, "resegment");
     const setRegion = vi.spyOn(live, "setRegion");
     const detach = attachWatershedVolume(source, makeOutput());
     latestWatch()[3](region);
@@ -1296,9 +1297,9 @@ describe("live watershed recipe parameter state", () => {
     );
     const changed = vi.fn(() => state.toJSON());
     state.changed.add(changed);
-    state.restoreState(next);
+    state.resegment(next);
     removeChanged();
-    expect(setParameters).toHaveBeenCalledExactlyOnceWith(
+    expect(resegment).toHaveBeenCalledExactlyOnceWith(
       next.channelsXYZ,
       next.options,
       next.halo,
@@ -1329,7 +1330,7 @@ describe("live watershed recipe parameter state", () => {
       next.options,
     ]);
     state.restoreState(JSON.parse(JSON.stringify(next)));
-    expect(setParameters).toHaveBeenCalledOnce();
+    expect(resegment).toHaveBeenCalledOnce();
     expect(changed).toHaveBeenCalledOnce();
     expect(state.toJSON()).toEqual(next);
     expect(JSON.parse(JSON.stringify(state))).toEqual(next);
@@ -1397,6 +1398,11 @@ describe("live watershed recipe parameter state", () => {
     expect(state.toJSON()).toEqual(original);
     expect(state.toJSON()).not.toHaveProperty("halo");
     expect(state.toJSON().options).not.toHaveProperty("aggThreshold");
+    expect((await readLabels()).filter((label) => label === 7n)).toHaveLength(
+      4,
+    );
+    expect(requestAsyncComputation).toHaveBeenCalledOnce();
+    state.resegment(state.toJSON());
     expect((await readLabels()).every((label) => label === 0n)).toBe(true);
     await vi.waitFor(async () =>
       expect((await readLabels()).filter((label) => label === 7n)).toHaveLength(
@@ -1434,16 +1440,16 @@ describe("live watershed recipe parameter state", () => {
     const provider = new WatershedDataSourceProvider();
     const data = await provider.get({ ...f.options, ...source });
     const state = parameters(data);
-    live.setRegion(region.lowerXYZ, region.shapeXYZ);
+    live.setViewport(region);
     const next: WatershedRecipe = {
       ...state.toJSON(),
       channelsXYZ: [0, 2, 1],
       halo: 0,
       options: { ...f.recipe.options, aggThreshold: 0.6 },
     };
-    const setParameters = vi.spyOn(live, "setParameters");
-    state.restoreState(next);
-    expect(setParameters).toHaveBeenCalledExactlyOnceWith(
+    const resegment = vi.spyOn(live, "resegment");
+    state.resegment(next);
+    expect(resegment).toHaveBeenCalledExactlyOnceWith(
       next.channelsXYZ,
       next.options,
       0,
@@ -1520,7 +1526,7 @@ describe("live watershed recipe parameter state", () => {
     expect(f.input.readRegion).toHaveBeenCalledOnce();
     expect(requestAsyncComputation).toHaveBeenCalledOnce();
     expect(live.signal.aborted).toBe(false);
-    state.restoreState({ ...original, halo: 0 });
+    state.resegment({ ...original, halo: 0 });
     expect(changed).toHaveBeenCalledOnce();
     expect(liveChanged).toHaveBeenCalledOnce();
     expect(state.toJSON().halo).toBe(0);
@@ -1539,7 +1545,7 @@ describe("live watershed recipe parameter state", () => {
       const detach = attachWatershedVolume(volume(data), makeOutput())!;
       latestWatch()[3](region);
       const original = state.toJSON();
-      state.restoreState({ ...original, halo: 512 });
+      state.resegment({ ...original, halo: 512 });
       expect(statusMessages.size).toBe(baseline + 1);
       expect([...statusMessages].at(-1)?.element.textContent).toContain(
         "2**26 voxel limit",
@@ -1550,7 +1556,7 @@ describe("live watershed recipe parameter state", () => {
         [...statusMessages].at(-1)!.element.querySelector("button")!.click();
         expect(statusMessages.size).toBe(baseline);
       }
-      expect(() => state.restoreState({ ...original, halo: 0 })).not.toThrow();
+      expect(() => state.resegment({ ...original, halo: 0 })).not.toThrow();
       await vi.waitFor(async () => {
         const labels = await latestLive().readTile(
           [0, 0, 0],
@@ -1574,7 +1580,7 @@ describe("live watershed recipe parameter state", () => {
     const data = await new WatershedDataSourceProvider().get(f.options);
     attachWatershedVolume(volume(data), makeOutput());
     latestWatch()[3](region);
-    parameters(data).restoreState({ ...f.recipe, halo: 512 });
+    parameters(data).resegment({ ...f.recipe, halo: 512 });
     expect(requestAsyncComputation).not.toHaveBeenCalled();
     expect(f.input.readRegion).not.toHaveBeenCalled();
     const oldStatus = [...statusMessages].at(-1)!;

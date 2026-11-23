@@ -200,7 +200,7 @@ export function watchWatershedViewport(
   outputLayer: ManagedUserLayer,
   onRegion: (region: WatershedViewportRegion | undefined) => void,
   onError: (error: unknown) => void,
-): () => void {
+): (() => void) & { refresh?: () => void } {
   if (viewer.wasDisposed || outputLayer.wasDisposed) {
     onRegion(undefined);
     return () => {};
@@ -340,5 +340,5 @@ export function watchWatershedViewport(
   outputLayer.registerDisposer(dispose);
   if (input.signal.aborted) abort();
   else update();
-  return dispose;
+  return Object.assign(dispose, { refresh: update });
 }

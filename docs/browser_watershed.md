@@ -30,26 +30,23 @@ required.
    more basins.
 5. Click **Add watershed layer**. A standard segmentation layer is added to the
    source's existing layer group, without changing the affinity layer or layout.
-   One shared result covers the **XYZ bounding box enclosing all visible relevant
-   slice views**, and follows navigation, resizing, and layout changes. There are
-   no region/ROI fields or manual Run step.
+   The initial run covers the **XYZ bounding box enclosing all visible relevant
+   slice views**. If none overlap the source, it waits for the first one.
 6. To adjust an existing output, select its **Source** tab in the right sidebar.
    **Watershed parameters** provides high/low thresholds, size/dust cleanup, and
    mask/agglomeration settings, with threshold sliders and precise numeric inputs.
+   Click **Reseg** to apply these drafts and compute for the current view.
    Halo and channel mapping are configured only in the **WASM Watershed** dialog;
    add or recreate a layer to change them. All dialog controls remain drafts for
    newly added layers.
 
 Creation publishes metadata, not a precomputed segmentation of the whole source.
-The box is expressed in the selected scale's **native grid coordinates**. For the
-first visible box, or when the visible box leaves the completed result's bounds,
-one watershed computation runs after a **150 ms debounce**, over the entire box
-plus the configured halo per face (**8 native voxels by default**), clipped to
-source bounds. Navigation entirely inside the completed result reuses its labels,
-without requiring a fresh halo around the new view. With the default halo, a single
-axis-aligned XY view at native voxel Z = k allows scrolling from k − 8 through
-k + 8 without recomputation, unless clipped by source bounds. All visible views
-must remain inside the shared XYZ result.
+The box is expressed in the selected scale's **native grid coordinates**. Each
+run uses the whole box plus the configured halo per face (**8 native voxels by
+default**), clipped to source bounds. Only the initial run is automatic.
+Panning, zooming, resizing, and layout changes leave the result in place; areas
+outside it have no labels. Click **Reseg** to compute for the new view, even if
+you haven't changed any thresholds.
 Labels from this single shared result are fetched and rendered in ordinary
 chunks; display-chunk requests never run watershed. Normal segmentation
 visibility, selection, opacity, and colors apply; initially all nonzero labels
@@ -60,10 +57,9 @@ clipped halo**. The Abiss WASM heap can grow to 4 GiB, with additional JavaScrip
 input/output buffers outside that heap. Large computations can require several
 GiB of memory; complex inputs may exhaust memory before reaching the voxel limit.
 An oversized view reports a visible error, not a partial segmentation:
-**zoom in**, or add a new layer through **WASM Watershed** with a smaller halo or
-at a coarser native scale. The box is never silently split into separate
-computations. The existing layer and viewport watcher stay active so navigation
-to a smaller box can retry. Computation waits
+**zoom in and click Reseg**, or add a new layer through **WASM Watershed** with a
+smaller halo or at a coarser native scale. The box is never silently split into
+separate computations. Computation waits
 for **ALL affinity data needed for the current box**, including its clipped halo,
 not just whichever display chunks arrive first. It does **not** wait for or read
 the whole dataset.
@@ -159,9 +155,8 @@ where the actual object ends. Extraction uses classic marching cubes, not
 voxel-face cubes, and does not guarantee manifold topology for ambiguous
 configurations.
 
-Contained navigation and identical parameters keep the same labels, selections,
-and mesh caches. A new watershed region or changed watershed/agglomeration
-parameters immediately retires the old meshes and clears visible and starred
+Navigation and unsubmitted drafts keep the same labels, selections, and mesh
+caches. Clicking **Reseg** retires the old meshes and clears visible and starred
 segment IDs, before computation completes. IDs are local to each result; select
 segments again after the new result completes. Linked segmentation layers share
 these sets, so their selections are cleared together without unlinking them.
@@ -199,22 +194,20 @@ completed region result**. Display-chunk requests never trigger watershed or
 independent label numbering. Existing ONNX affinity images are requested through
 their normal inference datasource, not a second ONNX path.
 
-A viewport box contained in the completed result preserves its labels and cached
-output chunks. Moving outside that result immediately clears obsolete labels and
-invalidates cached output chunks, then schedules one new full-domain computation
-after the debounce. Completion also invalidates output caches so previously empty
-chunks can reload.
-Hiding the output, or having no visible relevant slice view, clears the region and
-cancels pending work. Showing it again resumes viewport tracking. The source may
-be much larger than the computation cap; it is not read in full at creation.
+Moving outside the completed result does not clear labels or start a computation.
+After the first run, only **Reseg** replaces the result. Reseg clears obsolete
+labels and invalidates cached output chunks; completion invalidates them again
+so previously empty chunks can reload. Hiding or showing the output does not
+cancel a submitted run or discard its result. Reseg requires at least one
+visible slice view overlapping the affinity source.
 
 The watershed module runs in an asynchronous computation worker, without threads,
 `SharedArrayBuffer`, or cross-origin-isolation requirements. Supported browsers
 must support WebAssembly exceptions. Queued work and source chunk reads are
 cancellable; a synchronous WASM call already started may finish in its worker,
 but cancelled output is discarded. Work within a layer remains serialized until
-the physical worker call finishes, so rapid navigation does not start overlapping
-kernels for that layer.
+the physical worker call finishes, so repeated Reseg clicks do not start
+overlapping kernels for that layer.
 
 Each output layer owns its publication, live computation, and retained affinity
 input. **Closing the dialog does not stop created layers**, and selecting a
@@ -232,8 +225,8 @@ valid. Restored layers own an independent hidden input, without depending on a
 visible source layer's name or lifetime. If that hidden input fails, its data is
 retired but the saved layer and recipe remain visible with an error until deleted.
 Computation errors (including an oversized region) are also reported visibly and
-clear the result, but **keep the layer and watcher alive** so a later viewport box
-can retry. Fatal construction, publication, or activation errors still clean up
+clear the result, but **keep the layer and watcher alive** so you can retry with
+**Reseg**. Fatal construction, publication, or activation errors still clean up
 the failed output.
 
 ## Dialog-only halo and channel mapping
@@ -263,17 +256,13 @@ Select a watershed output's **Source** tab to edit only these settings:
 Probability spinners use a step of `0.01` in both the sidebar and dialog. Finer
 values can still be typed without rounding; sliders remain continuous.
 
-Controls respond immediately, but settings are applied and saved only after
-**250 ms without another edit**. Invalid drafts cancel pending updates, as do
-external recipe changes or disabling/removing the controls. Once applied, a valid
-edit clears obsolete labels and reuses the same prepared input, output layer, and
-datasource. The existing **150 ms compute debounce** then runs; an already-running
-synchronous kernel finishes before the latest settings run, and obsolete results
-are discarded. Hidden outputs remain
-idle until visible. Changing parameters forces a fresh computation even if the
-view still fits inside the previous result's halo. Oversized boxes still report
-an error rather than splitting; shrinking the view can recover, or add a new
-layer in **WASM Watershed** with a smaller halo.
+Controls respond immediately, but edits remain local drafts until you click
+**Reseg**. Invalid drafts cannot be submitted. The button applies and saves the
+drafts and starts a fresh computation using the current view and the same prepared
+input, output layer, and datasource. There is a **150 ms compute debounce**;
+an already-running synchronous kernel finishes before the latest request runs,
+and obsolete results are discarded. An oversized box still reports an error
+rather than splitting; shrink the view and click **Reseg** to retry.
 
 The sidebar updates the saved recipe and read-only JSON in place, without
 reloading the source. Controls are disabled while loading. Affinity source,
@@ -291,8 +280,8 @@ agglomeration threshold, and the optional top-level `halo` in native voxels.
 Omitting `halo` preserves the default `8`; newly added layers omit this key when
 using the default, while explicit `0` is retained. Halo and channel mapping are
 configured in the **WASM Watershed** dialog, not the sidebar. Sidebar threshold,
-size/dust, mask, and agglomeration edits are saved automatically and restored with
-the layer. Masking is enabled exactly when `options.maskThreshold` is present.
+size/dust, mask, and agglomeration edits are saved when submitted with **Reseg**
+and restored with the layer. Masking is enabled exactly when `options.maskThreshold` is present.
 Agglomeration is enabled exactly when `options.aggThreshold` is present, including
 a value of `0`; omitting it preserves the default watershed-only
 behavior. Unchecking **Agglomerate watershed basins** omits that key, regardless
@@ -321,8 +310,8 @@ Restoring copied JSON reconstructs an independently owned live layer and
 **recomputes one current-view union** using the saved settings. It does not
 restore the old navigation box or its labels, compute the whole volume, or start
 independent computations per display chunk. Restored computation likewise waits
-for all affinity data needed for its current box, including the halo. Labels may
-change with navigation just as for a newly created layer.
+for all affinity data needed for its current box, including the halo. After this
+initial run, click **Reseg** to recompute, just as for a newly created layer.
 
 Shared state contains **no computed labels, affinity data, or local file bytes**.
 The recipient still needs access and credentials for all upstream source URLs.

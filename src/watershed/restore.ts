@@ -235,13 +235,16 @@ export async function restoreWatershedRecipe(
         if (stopped || layer.wasDisposed) return () => {};
         detach?.();
         let active = true;
-        let unwatch = () => {};
+        let unwatch: ReturnType<typeof watchWatershedViewport> = () => {};
         const cleanup = () => {
           if (!active) return;
           active = false;
           unwatch();
           if (detach === cleanup) detach = undefined;
-          if (!stopped && !producer.signal.aborted) producer.setRegion();
+          if (!stopped && !producer.signal.aborted) {
+            producer.setViewportRefresh(undefined);
+            producer.setViewport(undefined);
+          }
         };
         detach = cleanup;
         unwatch = watchWatershedViewport(
@@ -250,16 +253,15 @@ export async function restoreWatershedRecipe(
           layer,
           (region) => {
             if (!active || stopped) return;
-            clearError();
-            producer.setRegion(region?.lowerXYZ, region?.shapeXYZ);
+            producer.setViewport(region);
           },
           (error) => {
             if (!active || stopped) return;
-            producer.setRegion();
-            reportError(error);
+            producer.setViewportError(error);
           },
         );
         if (!active) unwatch();
+        else producer.setViewportRefresh(unwatch.refresh);
         return cleanup;
       },
     };

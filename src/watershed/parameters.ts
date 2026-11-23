@@ -27,7 +27,10 @@ export class WatershedParametersState implements Trackable {
 
   constructor(
     recipe: WatershedRecipe,
-    private readonly apply: (recipe: WatershedRecipe) => void,
+    private readonly apply: (
+      recipe: WatershedRecipe,
+      resegment: boolean,
+    ) => void,
   ) {
     this.initial = parseWatershedRecipe(recipe);
     this.recipe = this.initial;
@@ -38,6 +41,14 @@ export class WatershedParametersState implements Trackable {
   }
 
   restoreState(value: unknown): void {
+    this.update(value);
+  }
+
+  resegment(value: unknown): void {
+    this.update(value, true);
+  }
+
+  private update(value: unknown, resegment = false): void {
     const recipe = parseWatershedRecipe(
       value === undefined ? this.initial : value,
     );
@@ -50,9 +61,11 @@ export class WatershedParametersState implements Trackable {
         "Changing the watershed input or native scale requires a new layer",
       );
     }
-    if (JSON.stringify(recipe) === JSON.stringify(this.recipe)) return;
+    const changed = JSON.stringify(recipe) !== JSON.stringify(this.recipe);
+    if (!changed && !resegment) return;
     // Producer validation must succeed before shared state is changed.
-    this.apply(recipe);
+    this.apply(recipe, resegment);
+    if (!changed) return;
     this.recipe = recipe;
     this.changed.dispatch();
   }

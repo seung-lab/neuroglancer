@@ -17,7 +17,6 @@
 import "#src/widget/range.css";
 import "#src/ui/watershed_parameters.css";
 
-import { debounce } from "lodash-es";
 import { RefCounted } from "#src/util/disposable.js";
 import { DEFAULT_WATERSHED_OPTIONS } from "#src/watershed/base.js";
 import type { WatershedRecipe } from "#src/watershed/recipe.js";
@@ -32,8 +31,6 @@ interface NumericControl {
   slider?: HTMLInputElement;
 }
 
-const PARAMETER_UPDATE_DELAY = 250;
-
 let nextWidgetId = 0;
 
 function sameRecipe(a: WatershedRecipe, b: WatershedRecipe) {
@@ -44,14 +41,13 @@ function sameRecipe(a: WatershedRecipe, b: WatershedRecipe) {
 /**
  * Editor for a prepared watershed's recipe, not its upstream inference config.
  * The owner supplies model refreshes via setRecipe and loading state via
- * setEnabled. Drafts are validated immediately and applied after editing settles.
- * apply must synchronously accept the recipe or throw; the live runtime retains
- * its separate computation debounce.
+ * setEnabled. Drafts are validated immediately and applied only on Reseg.
  */
 export class WatershedParametersWidget extends RefCounted {
   readonly element: HTMLElement = document.createElement("fieldset");
   private readonly context = document.createElement("div");
   private readonly error = document.createElement("div");
+  private readonly reseg = document.createElement("button");
   private readonly controls: NumericControl[] = [];
   private readonly id = `neuroglancer-watershed-parameters-${nextWidgetId++}`;
   private readonly high = this.numeric(
@@ -90,12 +86,6 @@ export class WatershedParametersWidget extends RefCounted {
   private recipe: WatershedRecipe;
   private applyingRecipe: WatershedRecipe | undefined;
   private enabled = true;
-  private readonly applyWhenSettled = this.registerCancellable(
-    debounce(
-      (recipe: WatershedRecipe) => this.applyRecipe(recipe),
-      PARAMETER_UPDATE_DELAY,
-    ),
-  );
 
   constructor(
     recipe: WatershedRecipe,
@@ -113,7 +103,11 @@ export class WatershedParametersWidget extends RefCounted {
     error.className = "neuroglancer-watershed-parameters-error";
     error.setAttribute("role", "alert");
     error.hidden = true;
-    element.append(error);
+    this.reseg.type = "button";
+    this.reseg.textContent = "Reseg";
+    this.reseg.title = "Segment the current view using these settings";
+    this.registerEventListener(this.reseg, "click", () => this.readDraft(true));
+    element.append(this.reseg, error);
     this.showRecipe();
   }
 
@@ -155,7 +149,7 @@ export class WatershedParametersWidget extends RefCounted {
       const fromSlider = () => {
         if (slider.disabled) return;
         input.value = slider.value;
-        this.applyDraft();
+        this.readDraft();
       };
       this.registerEventListener(slider, "input", fromSlider);
       this.registerEventListener(slider, "change", fromSlider);
@@ -163,7 +157,7 @@ export class WatershedParametersWidget extends RefCounted {
     const fromNumber = () => {
       if (input.disabled) return;
       this.syncSlider(control);
-      this.applyDraft();
+      this.readDraft();
     };
     this.registerEventListener(input, "input", fromNumber);
     this.registerEventListener(input, "change", fromNumber);
@@ -185,7 +179,7 @@ export class WatershedParametersWidget extends RefCounted {
     this.registerEventListener(input, "change", () => {
       if (input.disabled) return;
       this.updateEnabled();
-      this.applyDraft();
+      this.readDraft();
     });
     return input;
   }
@@ -242,11 +236,9 @@ export class WatershedParametersWidget extends RefCounted {
     try {
       const parsed = parseWatershedRecipe(recipe);
       if (sameRecipe(parsed, this.applyingRecipe ?? this.recipe)) return;
-      this.applyWhenSettled.cancel();
       this.recipe = parsed;
       this.showRecipe();
     } catch (error) {
-      this.applyWhenSettled.cancel();
       this.setError(error);
     }
   }
@@ -254,7 +246,7 @@ export class WatershedParametersWidget extends RefCounted {
   /** Loading must not discard drafts, trigger writes, or re-enable optionals. */
   public setEnabled(enabled: boolean): void {
     this.enabled = enabled;
-    if (!enabled) this.applyWhenSettled.cancel();
+    this.reseg.disabled = !enabled;
     this.updateEnabled();
   }
 
@@ -276,9 +268,8 @@ export class WatershedParametersWidget extends RefCounted {
     this.error.hidden = message === "";
   }
 
-  private applyDraft() {
+  private readDraft(resegment = false) {
     if (!this.enabled) return;
-    this.applyWhenSettled.cancel();
     try {
       const candidate = parseWatershedRecipe({
         ...this.recipe,
@@ -295,8 +286,8 @@ export class WatershedParametersWidget extends RefCounted {
             : {}),
         },
       });
-      if (!sameRecipe(candidate, this.recipe)) this.applyWhenSettled(candidate);
       this.setError("");
+      if (resegment) this.applyRecipe(candidate);
     } catch (error) {
       this.setError(error);
     }

@@ -876,7 +876,7 @@ function shareableWatershedRecipeTests() {
   }, 120_000);
 
   it.each(["affinity", "scalar", "mask"] as const)(
-    "round-trips %s UI output without its visible source or original publication, then follows navigation",
+    "round-trips %s UI output without its visible source or original publication, then retains it on navigation",
     async (kind) => {
       const jobs = observeWatershedWorker();
       const shape = [148, 5, 4];
@@ -1012,8 +1012,7 @@ function shareableWatershedRecipeTests() {
         saved,
       );
 
-      // Only viewport navigation/zoom drives this new domain. There is no ROI
-      // API call, display-chunk-sized fallback, or use of the disposed producer.
+      // Navigation and zoom change the visible box, not the completed domain.
       positionViewer(
         restored,
         [16.5, 2.5, 1.5],
@@ -1025,8 +1024,8 @@ function shareableWatershedRecipeTests() {
       expect(box.origin).toEqual([0, 0, 0]);
       expect(box.shape[0]).toBeGreaterThan(34);
       expect(box.shape[0]).toBeLessThan(64);
-      // Shrinking stays inside the completed full-domain result: retain all
-      // labels, including those now outside the viewport, without another job.
+      // Retain all labels, including those now outside the viewport, without
+      // another job.
       await delay(250);
       await expectTiles(restoredOutput.chunkSource, shape, label);
       expect(jobs.shapes()).toEqual([shape, shape]);
@@ -1344,7 +1343,7 @@ describe("regional live watershed (real WebGL, chunk RPC and native WASM)", () =
     expect(native.chunks.length).toBeGreaterThan(1);
   }, 90_000);
 
-  it("reuses completed labels through both inclusive XY-only Z halo limits and a shrinking view, then debounces one out-of-bounds computation", async () => {
+  it("preserves completed labels on pan and zoom, then computes the new domain on Reseg", async () => {
     const jobs = observeWatershedWorker();
     const shape = [148, 50, 48],
       offset = [10, 20, -3];
@@ -1442,6 +1441,13 @@ describe("regional live watershed (real WebGL, chunk RPC and native WASM)", () =
     const nextBox = visibleHaloBox(viewer, shape, offset);
     expect(nextBox.origin[2]).toBe(25);
     expect(nextBox.shape[2]).toBe(17);
+    await delay(250);
+    expect(jobs.shapes()).toEqual([initialBox.shape]);
+    for (const [i, grid] of grids.entries())
+      expect((await readTile(output.chunkSource, grid)).labels).toEqual(
+        before[i].labels,
+      );
+    watershedSourceControls(viewer, result).reseg();
     await expect
       .poll(() => jobs.shapes(), { timeout: 60_000 })
       .toEqual([initialBox.shape, nextBox.shape]);
@@ -1459,7 +1465,7 @@ describe("regional live watershed (real WebGL, chunk RPC and native WASM)", () =
     expect(session.statusLevel, session.status).toBe("info");
   }, 90_000);
 
-  it("debounces navigation, clears old labels, and discards an obsolete real kernel before serially starting the latest region", async () => {
+  it("only supersedes an in-flight kernel on Reseg and serially starts the requested region", async () => {
     const jobs = observeWatershedWorker(3);
     const shape = [384, 20, 16],
       offset = [4, 6, -2];
@@ -1483,8 +1489,8 @@ describe("regional live watershed (real WebGL, chunk RPC and native WASM)", () =
     expect(jobs.shapes()).toEqual([initialHalo]);
     const pending = await readTile(output.chunkSource, 1);
     expect(pending.labels).toEqual(expectedTile(pending.size, () => 0n));
-    // These distinct rectangles arrive less than 150 ms apart. Only the last
-    // one may become a kernel; the first native reply remains physically held.
+    // Navigation cannot supersede the physically held initial native reply.
+    // Reseg then submits only the last rectangle.
     for (const x of [180.5, 240.5, 290.5]) {
       viewer.position.value = output.worldPosition([x, 10.5, 8.5]);
       await settleView();
@@ -1492,6 +1498,8 @@ describe("regional live watershed (real WebGL, chunk RPC and native WASM)", () =
       expect(jobs.shapes()).toHaveLength(1);
     }
     const latestHalo = visibleHaloShape(viewer, shape, offset);
+    const controls = watershedSourceControls(viewer, result);
+    controls.reseg();
     await delay(250);
     expect(jobs.shapes()).toHaveLength(1); // Cancellation cannot free the slot.
     jobs.release(0);
@@ -1515,8 +1523,8 @@ describe("regional live watershed (real WebGL, chunk RPC and native WASM)", () =
     expect(outside.labels).toEqual(expectedTile(outside.size, () => 0n));
     expect(jobs.shapes()).toHaveLength(2);
 
-    // Repeat with a FREE kernel slot and a previously published nonzero result:
-    // serialization alone must not masquerade as navigation debounce.
+    // Repeat with a free kernel slot and a previously published result: the
+    // previous absence of new kernels wasn't merely due to serialization.
     for (const x of [220.5, 190.5, 150.5]) {
       viewer.position.value = output.worldPosition([x, 10.5, 8.5]);
       await settleView();
@@ -1524,9 +1532,13 @@ describe("regional live watershed (real WebGL, chunk RPC and native WASM)", () =
       expect(jobs.shapes()).toHaveLength(2);
     }
     const finalHalo = visibleHaloShape(viewer, shape, offset);
+    await delay(250);
+    expect(jobs.shapes()).toHaveLength(2);
+    expect((await readTile(output.chunkSource, 5)).labels).toEqual(edge.labels);
+    controls.reseg();
     await expect.poll(() => jobs.hasReply(2), { timeout: 60_000 }).toBe(true);
     expect(jobs.shapes()).toEqual([initialHalo, latestHalo, finalHalo]);
-    // This was ID 2 before navigation. Await the real cache invalidation,
+    // This was ID 2 before Reseg. Await the real cache invalidation,
     // rather than manually evicting a stale display copy to make it pass.
     await expect
       .poll(async () => (await readTile(output.chunkSource, 5)).labels[0])
@@ -1920,7 +1932,7 @@ describe("regional live watershed (real WebGL, chunk RPC and native WASM)", () =
     expect(jobs.shapes()).toEqual([[180, 60, 16]]);
   }, 90_000);
 
-  it("visibly rejects a union over 2**26 voxels with ZERO split fallback calls and recovers on the next smaller view", async () => {
+  it("visibly rejects a union over 2**26 voxels with ZERO split fallback calls and recovers on Reseg in a smaller view", async () => {
     const jobs = observeWatershedWorker();
     // Only metadata grows; rejected regions must not fetch or allocate data.
     const shape = [1024, 1024, 512],
@@ -1954,6 +1966,10 @@ describe("regional live watershed (real WebGL, chunk RPC and native WASM)", () =
     expect(native.chunks).toEqual([]);
     expect(viewer.layerManager.has(result)).toBe(true); // Nonfatal regional error.
     viewer.crossSectionScale.value = 0.08;
+    await settleView();
+    await delay(250);
+    expect(jobs.shapes()).toEqual([]);
+    watershedSourceControls(viewer, result).reseg();
     await expect
       .poll(
         () =>
@@ -2016,6 +2032,14 @@ function watershedSourceControls(viewer: Viewer, result: ManagedUserLayer) {
       expect(element.disabled, label).toBe(false);
       element.value = value;
       element.dispatchEvent(new Event("input", { bubbles: true }));
+    },
+    reseg() {
+      const button = view.element.querySelector<HTMLButtonElement>(
+        ".neuroglancer-watershed-parameters button",
+      );
+      expect(button?.textContent).toBe("Reseg");
+      expect(button!.checkVisibility()).toBe(true);
+      button!.click();
     },
     expectRecipe(recipe: WatershedRecipe) {
       // These remain creation-dialog settings, not right-sidebar controls.
@@ -2139,7 +2163,7 @@ describe("right-sidebar live watershed parameters (real browser and WASM)", () =
       label: (x: number) => bigint,
       count: number,
     ) => {
-      // Unchanged labels can already match while the sidebar draft is pending.
+      // Wait for the submitted recipe and exact kernel inputs as well as labels.
       await vi.waitFor(() => controls.expectRecipe(recipe));
       await expect
         .poll(() => jobs.options().at(-1), { timeout: 60_000 })
@@ -2154,7 +2178,7 @@ describe("right-sidebar live watershed parameters (real browser and WASM)", () =
     expect(controls.input("Agglomerate watershed basins").checked).toBe(false);
     expect(controls.input(agglomerationThresholdLabel).disabled).toBe(true);
     // Observe invalidation itself so the zero-label assertion does not race
-    // the sidebar debounce or the subsequent real kernel's completion.
+    // the subsequent real kernel's completion.
     const clearing = vi.fn(() => ({
       labels: producer.readTile(
         [0, 0, 0],
@@ -2167,6 +2191,9 @@ describe("right-sidebar live watershed parameters (real browser and WASM)", () =
     cleanup.push(removeClearing);
     controls.input("Agglomerate watershed basins").click();
     controls.fill(agglomerationThresholdLabel, "0.2");
+    await expectResult(split, 1);
+    expect(clearing).not.toHaveBeenCalled();
+    controls.reseg();
     recipe.options = { ...recipe.options, aggThreshold: 0.2 };
     await vi.waitFor(() => expect(clearing).toHaveBeenCalled());
     removeClearing();
@@ -2175,12 +2202,15 @@ describe("right-sidebar live watershed parameters (real browser and WASM)", () =
     expect(pending.options).toEqual([watershedThresholds]);
     await expectResult(() => 1n, 2); // Independent .25 > .2 contact oracle.
     controls.fill(agglomerationThresholdLabel, "0.25");
+    controls.reseg();
     recipe.options = { ...recipe.options, aggThreshold: 0.25 };
     await expectResult(split, 3); // Equality MUST NOT merge.
     controls.fill(agglomerationThresholdLabel, "0");
+    controls.reseg();
     recipe.options = { ...recipe.options, aggThreshold: 0 };
     await expectResult(() => 1n, 4); // Numeric zero is enabled, not absent.
     controls.input("Use last channel as mask").click();
+    controls.reseg();
     recipe.options = { ...recipe.options, maskThreshold: 0.3 };
     await expectResult(barrier, 5); // Both edges touching x=2 are removed.
 
@@ -2193,6 +2223,7 @@ describe("right-sidebar live watershed parameters (real browser and WASM)", () =
     controls.fill("Size threshold", "1");
     controls.fill("Dust threshold", "1");
     controls.fill("Mask threshold", "0.4");
+    controls.reseg();
     recipe.options = {
       ...recipe.options,
       highThreshold: 0.9,
@@ -2212,9 +2243,10 @@ describe("right-sidebar live watershed parameters (real browser and WASM)", () =
     ]);
     controls.fill("High threshold", "0.05");
     expect(controls.view.element.textContent).toMatch(/low|high|threshold/i);
+    controls.reseg();
     await expectResult(barrier, 6); // Old recipe AND labels survive invalid drafts.
     controls.fill("High threshold", "0.9");
-    await expectResult(barrier, 6); // Recovering an unchanged recipe is a no-op.
+    await expectResult(barrier, 6); // Fixing the draft alone does not submit it.
     // Advanced saved-state validation still exists without sidebar inputs.
     expect(() => state!.restoreState({ ...recipe, halo: -1 })).toThrow(
       /halo|nonnegative/i,
@@ -2262,6 +2294,7 @@ describe("right-sidebar live watershed parameters (real browser and WASM)", () =
     expect(saveOnlyWatershed(restored, restoredResult, recipe)).toEqual(saved);
     expect(native.chunks).toHaveLength(2);
     restoredControls.input("Use last channel as mask").click();
+    restoredControls.reseg();
     const unmasked = {
       highThreshold: 0.9,
       lowThreshold: 0.05,
@@ -2319,8 +2352,8 @@ describe("right-sidebar live watershed parameters (real browser and WASM)", () =
     const state = loaded.dataSource.state!;
     const producer = regions.mock.contexts[0] as LiveWatershed;
     expect(producer).toBeInstanceOf(LiveWatershed);
-    // Use the real datasource Trackable with detached saved JSON. No sidebar
-    // halo/channel inputs exist, but programmatic reconfiguration still works.
+    // Set advanced options as saved JSON, then run via the same sidebar
+    // trigger used for threshold changes.
     const restoreHalo = (halo: number) => {
       recipe.halo = halo;
       state.restoreState(JSON.parse(JSON.stringify(recipe)));
@@ -2377,6 +2410,9 @@ describe("right-sidebar live watershed parameters (real browser and WASM)", () =
     await expectDomain(254, 5);
     for (const halo of [8, 0, 2, 8]) {
       restoreHalo(halo);
+      await delay(200);
+      expect(jobs.shapes()).toEqual(expectedShapes);
+      controls.reseg();
       expectedShapes.push([148, 50, 1 + 2 * halo]);
       await expect
         .poll(() => jobs.shapes(), { timeout: 60_000 })
@@ -2391,6 +2427,7 @@ describe("right-sidebar live watershed parameters (real browser and WASM)", () =
     expect(shape.reduce((a, b) => a * b, 1)).toBeGreaterThan(2 ** 26);
     restoreHalo(16384);
     controls.expectRecipe(recipe);
+    controls.reseg();
     await expect.poll(() => session.statusLevel).toBe("error");
     expect(session.status).toMatch(/2\*\*26|67,108,864|67108864/);
     session.open();
@@ -2402,6 +2439,7 @@ describe("right-sidebar live watershed parameters (real browser and WASM)", () =
     expect(native.chunks).toHaveLength(fetched);
     expect(viewer.layerManager.has(result)).toBe(true);
     restoreHalo(2);
+    controls.reseg();
     expectedShapes.push([148, 50, 5]);
     await expectDomain(254, 5);
     expect(session.statusLevel, session.status).toBe("info");
@@ -2415,6 +2453,7 @@ describe("right-sidebar live watershed parameters (real browser and WASM)", () =
       expect(jobs.shapes()).toEqual(expectedShapes);
     }
     viewer.position.value = output.worldPosition([74.5, 25.5, 259.5]);
+    controls.reseg();
     await expect.poll(() => value(63.5, 259.5), { timeout: 60_000 }).toBe(1n);
     expectedShapes.push([148, 50, 5]);
     await expectDomain(257, 5);
@@ -2451,6 +2490,9 @@ describe("right-sidebar live watershed parameters (real browser and WASM)", () =
       JSON.parse(JSON.stringify(recipe)),
     );
     restoredControls.expectRecipe(recipe);
+    await delay(250);
+    expect(jobs.shapes()).toEqual([...expectedShapes, [148, 50, 5]]);
+    restoredControls.reseg();
     await expect
       .poll(() => jobs.shapes(), { timeout: 60_000 })
       .toEqual([...expectedShapes, [148, 50, 5], [148, 50, 1]]);

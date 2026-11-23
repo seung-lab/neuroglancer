@@ -33,7 +33,7 @@ function fixture() {
     options: { ...DEFAULT_WATERSHED_OPTIONS },
     spacingXYZ: [4e-9, 4e-9, 40e-9],
   };
-  const apply = vi.fn<(recipe: WatershedRecipe) => void>();
+  const apply = vi.fn<(recipe: WatershedRecipe, resegment: boolean) => void>();
   const state = new WatershedParametersState(recipe, apply);
   const changed = vi.fn();
   state.changed.add(changed);
@@ -56,7 +56,7 @@ describe("editable watershed recipe state", () => {
     expect(changed).not.toHaveBeenCalled();
   });
 
-  it("applies all algorithm settings and zero halo before publishing changed JSON", () => {
+  it("validates all algorithm settings and zero halo without requesting a run", () => {
     const { state, apply, changed } = fixture();
     const recipe = state.toJSON();
     recipe.options = {
@@ -74,7 +74,7 @@ describe("editable watershed recipe state", () => {
       expect(state.toJSON().options).toEqual(DEFAULT_WATERSHED_OPTIONS);
     });
     state.restoreState(recipe);
-    expect(apply).toHaveBeenCalledExactlyOnceWith(recipe);
+    expect(apply).toHaveBeenCalledExactlyOnceWith(recipe, false);
     expect(changed).toHaveBeenCalledOnce();
     expect(state.toJSON()).toEqual(recipe);
     recipe.halo = 20;
@@ -103,6 +103,17 @@ describe("editable watershed recipe state", () => {
     const { state, apply, changed } = fixture();
     state.restoreState(JSON.parse(JSON.stringify(state.toJSON())));
     expect(apply).not.toHaveBeenCalled();
+    expect(changed).not.toHaveBeenCalled();
+  });
+
+  it("requests a run for an unchanged recipe without republishing JSON", () => {
+    const { state, apply, recipe, changed } = fixture();
+    state.resegment(state.toJSON());
+    state.resegment(state.toJSON());
+    expect(apply.mock.calls).toEqual([
+      [recipe, true],
+      [recipe, true],
+    ]);
     expect(changed).not.toHaveBeenCalled();
   });
 

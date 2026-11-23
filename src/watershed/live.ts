@@ -27,6 +27,7 @@ import {
 } from "#src/watershed/base.js";
 import type { PreparedAffinityInput } from "#src/watershed/input.js";
 import { computeWatershed } from "#src/watershed/run.js";
+import type { WatershedViewportRegion } from "#src/watershed/viewport.js";
 
 // These are display/transport chunks, never independent watershed domains.
 export const LIVE_WATERSHED_TILE_SHAPE_XYZ = Object.freeze([64, 64, 32]);
@@ -85,6 +86,9 @@ export class LiveWatershed {
   private options: WatershedOptions;
   private readonly lowerBound: readonly number[];
   private readonly upperBound: readonly number[];
+  private viewport: WatershedViewportRegion | undefined;
+  private initialRunRequested = false;
+  private refreshViewport: (() => void) | undefined;
   private requested: Region | undefined;
   private region: Region | undefined;
   private result:
@@ -210,6 +214,70 @@ export class LiveWatershed {
     return snapshot;
   }
 
+  /** Track navigation without changing the scheduled or completed result. */
+  setViewport(region: WatershedViewportRegion | undefined): void {
+    this.viewport = region;
+    if (region === undefined || this.initialRunRequested) return;
+    this.initialRunRequested = true;
+    this.setRegion(region.lowerXYZ, region.shapeXYZ);
+  }
+
+  setViewportError(error: unknown): void {
+    this.viewport = undefined;
+    if (!this.initialRunRequested) this.onError(error);
+  }
+
+  setViewportRefresh(refresh: (() => void) | undefined): void {
+    this.refreshViewport = refresh;
+  }
+
+  /** Snapshot the latest view and settings as one explicit run. */
+  resegment(
+    channels: readonly number[],
+    options: WatershedOptions,
+    halo = DEFAULT_WATERSHED_HALO,
+  ): void {
+    // Projection updates may still be pending when the user clicks Reseg.
+    this.refreshViewport?.();
+    this.validateParameters(channels, options, halo);
+    const viewport = this.viewport;
+    if (viewport === undefined)
+      throw new Error(
+        "Reseg requires a visible slice view overlapping the affinity source",
+      );
+    this.channels = [...channels];
+    this.options = { ...options };
+    this.halo = halo;
+    this.updateRegion(
+      { lower: [...viewport.lowerXYZ], shape: [...viewport.shapeXYZ] },
+      false,
+    );
+  }
+
+  /** Restore settings without replacing any run already requested. */
+  configureInitialRun(
+    channels: readonly number[],
+    options: WatershedOptions,
+    halo = DEFAULT_WATERSHED_HALO,
+  ): void {
+    this.validateParameters(channels, options, halo);
+    if (this.initialRunRequested) return;
+    this.channels = [...channels];
+    this.options = { ...options };
+    this.halo = halo;
+  }
+
+  private validateParameters(
+    channels: readonly number[],
+    options: WatershedOptions,
+    halo = DEFAULT_WATERSHED_HALO,
+  ): void {
+    this.assertValid();
+    validateWatershedOptions(options);
+    validateWatershedChannels(this.input.channelCount, channels, options);
+    validateWatershedHalo(halo);
+  }
+
   /** Atomically replace the configuration without replacing the retained input.
    * Changed parameters retire labels even when the current view was contained
    * in the completed region. Hidden views remain idle until visible again. */
@@ -218,12 +286,9 @@ export class LiveWatershed {
     options: WatershedOptions,
     halo = DEFAULT_WATERSHED_HALO,
   ): void {
-    this.assertValid();
     const channels = Object.freeze(Array.from(channelsXYZ));
     const parameters = Object.freeze({ ...options });
-    validateWatershedOptions(parameters);
-    validateWatershedChannels(this.input.channelCount, channels, parameters);
-    validateWatershedHalo(halo);
+    this.validateParameters(channels, parameters, halo);
     if (
       halo === this.halo &&
       channels.every((n, i) => n === this.channels[i]) &&

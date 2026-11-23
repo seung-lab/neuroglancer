@@ -472,7 +472,7 @@ describe("DataSourceView editable watershed parameters", () => {
     expect(registry.get).not.toHaveBeenCalled();
   });
 
-  it("persists valid control edits and refreshes JSON without a datasource reload", async () => {
+  it("persists valid control edits only on Reseg and refreshes JSON without a datasource reload", async () => {
     const { view, source, state, apply, loaded, setSpec, registry } =
       editableWatershedFixture();
     const size = view.element.querySelector<HTMLInputElement>(
@@ -481,8 +481,16 @@ describe("DataSourceView editable watershed parameters", () => {
     const editor = sourceStateEditor(view, "Watershed");
     size.value = "0";
     size.dispatchEvent(new Event("input", { bubbles: true }));
+    await nextFrame();
+    expect(apply).not.toHaveBeenCalled();
+    expect(state.toJSON().options.sizeThreshold).not.toBe(0);
+    const reseg = view.element.querySelector<HTMLButtonElement>(
+      ".neuroglancer-watershed-parameters button",
+    )!;
+    expect(reseg.textContent).toBe("Reseg");
+    reseg.click();
     await vi.waitFor(() => {
-      expect(apply).toHaveBeenCalledOnce();
+      expect(apply).toHaveBeenCalledExactlyOnceWith(state.toJSON(), true);
       expect(state.toJSON().options.sizeThreshold).toBe(0);
       expect(source.spec.state.options.sizeThreshold).toBe(0);
       expect(JSON.parse(editor.getValue()).options.sizeThreshold).toBe(0);

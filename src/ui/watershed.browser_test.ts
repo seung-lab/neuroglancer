@@ -95,7 +95,10 @@ function makeInput(scaleIndex: number, channelCount = 4) {
   } satisfies PreparedAffinityInput & { invalidate(signal?: boolean): void };
 }
 
-function makeLive(input: PreparedAffinityInput) {
+function makeLive(
+  input: PreparedAffinityInput,
+  onError: (error: unknown) => void,
+) {
   const changed = new NullarySignal();
   return {
     info: {
@@ -107,7 +110,8 @@ function makeLive(input: PreparedAffinityInput) {
     },
     signal: input.signal,
     changed,
-    setRegion: vi.fn<LiveWatershed["setRegion"]>(() => changed.dispatch()),
+    setViewport: vi.fn<LiveWatershed["setViewport"]>(),
+    setViewportError: vi.fn(onError),
     assertValid: vi.fn(() => input.assertValid()),
     dispose: vi.fn(disposableOnce(() => input.dispose())),
   };
@@ -213,7 +217,7 @@ function fixture(channelCount = 4) {
   const onErrors: Array<(error: unknown) => void> = [];
   const createLive = vi.fn<WatershedDependencies["createLive"]>(
     (input, _channels, _options, onError) => {
-      const live = makeLive(input);
+      const live = makeLive(input, onError);
       lives.push(live);
       onErrors.push(onError);
       return live as unknown as LiveWatershed;
@@ -458,19 +462,19 @@ describe("WASM watershed UI", () => {
     for (const explanation of [
       "one shared result",
       "all visible slice views",
-      "As you navigate",
-      "150 ms debounce",
+      "initial box is computed automatically",
+      "Navigation does not rerun segmentation",
+      "Use Reseg in the Source tab",
       "configured halo per face (default 8 native voxels)",
       "Halo and channel mapping are drafts for new layers",
       "add or recreate a layer to change them",
       "not computed per display chunk",
-      "labels may change across navigation",
       "not equivalent to whole-volume watershed",
       "2**26 (67,108,864) voxels INCLUDING the halo",
       "zoom in",
       "coarser native scale",
       "never silently split",
-      "Hiding the output",
+      "Hiding and showing the output does not recompute it",
       "UINT64",
       "negative axes",
       "data type maximum",
@@ -706,7 +710,7 @@ describe("WASM watershed UI", () => {
     fill(f.session, "Halo (voxels)", "0");
     fill(f.session, "Channels for −X −Y −Z", "0, 0, 0");
     expect(f.createLive).toHaveBeenCalledOnce();
-    expect(f.lives[0].setRegion).not.toHaveBeenCalled();
+    expect(f.lives[0].setViewport).not.toHaveBeenCalled();
     expect(f.resultLayers[0].layer!.toJSON()).toEqual(saved);
     await f.session.addLayer();
     expect(f.createLive.mock.calls[0][1]).toEqual([2, 0, 2]);
@@ -1145,11 +1149,11 @@ describe("WASM watershed UI", () => {
         lowerXYZ: [10, 20, -30],
         shapeXYZ: [24, 16, 8],
       });
-      expect(f.lives[0].setRegion).toHaveBeenLastCalledWith(
-        [10, 20, -30],
-        [24, 16, 8],
-      );
-      expect(f.lives[1].setRegion).not.toHaveBeenCalled();
+      expect(f.lives[0].setViewport).toHaveBeenLastCalledWith({
+        lowerXYZ: [10, 20, -30],
+        shapeXYZ: [24, 16, 8],
+      });
+      expect(f.lives[1].setViewport).not.toHaveBeenCalled();
       expect(f.publications[0].dispose).not.toHaveBeenCalled();
       expect(f.watchers[0].dispose).not.toHaveBeenCalled();
       if (transition === "source") selectSource(f.session, 0);
@@ -1422,32 +1426,26 @@ describe("WASM watershed UI", () => {
     };
     f.watchers[0].onRegion(first);
     f.watchers[0].onRegion(navigated);
-    expect(f.lives[0].setRegion.mock.calls).toEqual([
-      [first.lowerXYZ, first.shapeXYZ],
-      [navigated.lowerXYZ, navigated.shapeXYZ],
-    ]);
-    expect(f.lives[0].setRegion.mock.calls[0][0]).toBe(first.lowerXYZ);
-    expect(f.lives[0].setRegion.mock.calls[1][1]).toBe(navigated.shapeXYZ);
+    expect(f.lives[0].setViewport.mock.calls).toEqual([[first], [navigated]]);
+    expect(f.lives[0].setViewport.mock.calls[0][0]).toBe(first);
+    expect(f.lives[0].setViewport.mock.calls[1][0]).toBe(navigated);
     expect(f.createLive).toHaveBeenCalledOnce();
     expect(input.readRegion).not.toHaveBeenCalled();
     expect(input.dispose).not.toHaveBeenCalled();
   });
 
-  it("clears hidden/no-view regions without stopping tracking, resumes on show, and ignores callbacks after reset", async () => {
+  it("tracks hidden/no-view and visible states and ignores callbacks after reset", async () => {
     const f = fixture();
     await f.session.addLayer();
     const watcher = f.watchers[0];
     const region = { lowerXYZ: [10, 20, -30], shapeXYZ: [32, 24, 8] };
     watcher.onRegion(region);
     watcher.onRegion(undefined);
-    expect(f.lives[0].setRegion).toHaveBeenLastCalledWith(undefined, undefined);
+    expect(f.lives[0].setViewport).toHaveBeenLastCalledWith(undefined);
     expect(f.publications[0].dispose).not.toHaveBeenCalled();
     expect(watcher.dispose).not.toHaveBeenCalled();
     watcher.onRegion(region);
-    expect(f.lives[0].setRegion).toHaveBeenLastCalledWith(
-      region.lowerXYZ,
-      region.shapeXYZ,
-    );
+    expect(f.lives[0].setViewport).toHaveBeenLastCalledWith(region);
     f.session.reset();
     expect(watcher.dispose).toHaveBeenCalledOnce();
     expect(f.publications[0].dispose).toHaveBeenCalledOnce();
@@ -1455,34 +1453,67 @@ describe("WASM watershed UI", () => {
     watcher.onRegion(region);
     watcher.onRegion(undefined);
     watcher.onError(new Error("late geometry error"));
-    expect(f.lives[0].setRegion).toHaveBeenCalledTimes(3);
+    expect(f.lives[0].setViewport).toHaveBeenCalledTimes(3);
+    expect(f.lives[0].setViewportError).not.toHaveBeenCalled();
     expect(f.session.status).toBe(status);
   });
 
-  it("clears a viewport geometry error and keeps the watcher for a later valid box", async () => {
+  it("auto-runs the initial view once and keeps its labels until explicit resegmentation", async () => {
     const f = fixture();
-    await f.session.addLayer();
-    f.session.open();
-    const watcher = f.watchers[0];
-    watcher.onRegion({ lowerXYZ: [10, 20, -30], shapeXYZ: [32, 24, 8] });
-    watcher.onError(new Error("Unsupported slice geometry"));
-    expect(f.lives[0].setRegion).toHaveBeenLastCalledWith();
-    expect(f.session.statusLevel).toBe("error");
-    expect(
-      f.session.dialog!.body.querySelector('[role="status"]')!.textContent,
-    ).toContain("Unsupported slice geometry");
-    expect(f.layerManager.has(f.resultLayers[0])).toBe(true);
-    expect(watcher.dispose).not.toHaveBeenCalled();
-    watcher.onRegion({ lowerXYZ: [12, 22, -24], shapeXYZ: [12, 12, 8] });
-    expect(f.lives[0].setRegion).toHaveBeenLastCalledWith(
-      [12, 22, -24],
-      [12, 12, 8],
+    let live!: LiveWatershed;
+    f.createLive.mockImplementationOnce(
+      (...args) => (live = new LiveWatershed(...args)),
     );
-    expect(f.publications[0].dispose).not.toHaveBeenCalled();
-    expect(f.session.statusLevel).toBe("info");
-    expect(
-      f.session.dialog!.body.querySelector('[role="status"]')!.textContent,
-    ).not.toContain("Unsupported slice geometry");
+    const compute = vi.mocked(computeWatershed);
+    compute.mockClear().mockImplementation(async (input, lower, shape) => ({
+      data: new Uint32Array(shape.reduce((n, x) => n * x, 1)).fill(7),
+      shapeXYZ: [...shape],
+      offsetXYZ: [...lower],
+      spacingXYZ: [...input.spacingXYZ],
+      unitsXYZ: [...input.unitsXYZ],
+    }));
+    try {
+      await f.session.addLayer();
+      const watcher = f.watchers[0];
+      const initial = { lowerXYZ: [10, 20, -30], shapeXYZ: [4, 4, 4] };
+      const navigated = { lowerXYZ: [30, 40, -10], shapeXYZ: [4, 4, 4] };
+      watcher.onRegion(undefined);
+      watcher.onRegion(initial);
+      // A pan before the initial compute starts must not replace its box.
+      watcher.onRegion(navigated);
+      await vi.waitFor(() =>
+        expect(live.getCompletedSnapshot()?.lowerXYZ).toEqual(initial.lowerXYZ),
+      );
+      const epoch = live.epoch;
+      watcher.onRegion(undefined);
+      watcher.onError(new Error("Unsupported slice geometry"));
+      expect(() =>
+        live.resegment([0, 1, 2], DEFAULT_WATERSHED_OPTIONS),
+      ).toThrow(/visible slice view/);
+      watcher.onRegion(navigated);
+      expect(live.epoch).toBe(epoch);
+      expect(live.getCompletedSnapshot()?.labels[0]).toBe(7);
+      expect(compute).toHaveBeenCalledOnce();
+
+      const next = { ...DEFAULT_WATERSHED_OPTIONS, sizeThreshold: 75 };
+      live.resegment([0, 1, 2], next, 0);
+      await vi.waitFor(() =>
+        expect(live.getCompletedSnapshot()?.lowerXYZ).toEqual(
+          navigated.lowerXYZ,
+        ),
+      );
+      expect(compute).toHaveBeenCalledTimes(2);
+      expect(compute).toHaveBeenLastCalledWith(
+        f.inputs.at(-1),
+        navigated.lowerXYZ,
+        navigated.shapeXYZ,
+        [0, 1, 2],
+        next,
+        expect.any(AbortSignal),
+      );
+    } finally {
+      compute.mockReset();
+    }
   });
 
   it.each(["compute", "geometry"])(
@@ -1502,9 +1533,10 @@ describe("WASM watershed UI", () => {
       const watch = f.watchViewport.getMockImplementation()!;
       f.watchViewport.mockImplementationOnce((...args) => {
         const dispose = watch(...args);
-        args[3]({ lowerXYZ: [10, 20, -30], shapeXYZ: [512, 512, 512] });
-        if (kind === "compute") f.onErrors[0](new Error(message));
-        else args[4](new Error(message));
+        if (kind === "compute") {
+          args[3]({ lowerXYZ: [10, 20, -30], shapeXYZ: [512, 512, 512] });
+          f.onErrors[0](new Error(message));
+        } else args[4](new Error(message));
         return dispose;
       });
       await f.session.addLayer();
@@ -1635,11 +1667,8 @@ describe("WASM watershed UI", () => {
     expect(f.watchers[1].dispose).not.toHaveBeenCalled();
     const secondRegion = { lowerXYZ: [12, 22, -24], shapeXYZ: [12, 12, 8] };
     f.watchers[1].onRegion(secondRegion);
-    expect(f.lives[0].setRegion).not.toHaveBeenCalled();
-    expect(f.lives[1].setRegion).toHaveBeenLastCalledWith(
-      secondRegion.lowerXYZ,
-      secondRegion.shapeXYZ,
-    );
+    expect(f.lives[0].setViewport).not.toHaveBeenCalled();
+    expect(f.lives[1].setViewport).toHaveBeenLastCalledWith(secondRegion);
     expect(f.sourceGroup.has(f.resultLayers[0])).toBe(false);
     expect(f.otherGroup.has(f.resultLayers[1])).toBe(true);
     expect(f.session.source).toBe(f.b);
@@ -1780,14 +1809,10 @@ describe("WASM watershed UI", () => {
       expect(f.publications[0].dispose).not.toHaveBeenCalled();
       expect(f.watchers[0].dispose).not.toHaveBeenCalled();
       expect(f.lives[0].signal.aborted).toBe(false);
-      // Runtime owns clearing failed results/cache invalidation. The UI must
-      // leave tracking active so a smaller box can schedule a fresh computation.
+      // Keep tracking the box to use if the user retries with Reseg.
       const region = { lowerXYZ: [12, 24, -20], shapeXYZ: [16, 12, 8] };
       f.watchers[0].onRegion(region);
-      expect(f.lives[0].setRegion).toHaveBeenLastCalledWith(
-        region.lowerXYZ,
-        region.shapeXYZ,
-      );
+      expect(f.lives[0].setViewport).toHaveBeenLastCalledWith(region);
       expect(f.createLive).toHaveBeenCalledOnce();
       expect(f.publish).toHaveBeenCalledOnce();
       deleteLayer(f.resultLayers[0]);
@@ -1797,7 +1822,7 @@ describe("WASM watershed UI", () => {
       f.onErrors[0](new Error("old worker failure"));
       f.watchers[0].onRegion(region);
       expect(f.session.status).toBe(finalStatus);
-      expect(f.lives[0].setRegion).toHaveBeenCalledOnce();
+      expect(f.lives[0].setViewport).toHaveBeenCalledOnce();
     },
   );
 
@@ -1866,10 +1891,8 @@ describe("WASM watershed UI", () => {
     );
     expect(f.session.statusLevel).toBe("info");
     expect(status.textContent).not.toContain("2**26 voxel limit");
-    expect(failure).toContain("Adjust sidebar thresholds");
-    expect(failure).toContain(
-      "add a layer in WASM Watershed with a smaller halo",
-    );
+    expect(failure).toContain("Use Reseg in the Source tab to retry");
+    expect(failure).toContain("add a layer with a smaller halo");
     expect(failure).not.toContain("reduce halo");
     expect(f.createLive).toHaveBeenCalledOnce();
     expect(f.publish).toHaveBeenCalledOnce();
@@ -2084,7 +2107,7 @@ describe("WASM watershed UI", () => {
     expect(f.session.status).toContain("Viewer reset");
     expect(f.watchers[0].dispose).toHaveBeenCalledOnce();
     expect(f.publications[0].dispose).toHaveBeenCalledOnce();
-    expect(f.lives[0].setRegion).not.toHaveBeenCalled();
+    expect(f.lives[0].setViewport).not.toHaveBeenCalled();
     expect(f.layerManager.has(f.resultLayers[0])).toBe(false);
     expect(f.sourceGroup.has(f.resultLayers[0])).toBe(false);
     expect(f.session.busy).toBe(false);
@@ -2160,7 +2183,7 @@ describe("WASM watershed UI", () => {
       if (stage === "construction")
         f.createLive.mockImplementationOnce(
           (input, _channels, _options, onError) => {
-            const live = makeLive(input);
+            const live = makeLive(input, onError);
             f.lives.push(live);
             onError(new Error("startup failed"));
             return live as unknown as LiveWatershed;

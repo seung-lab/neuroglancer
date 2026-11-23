@@ -308,7 +308,7 @@ export class WatershedSession extends RefCounted {
     this.changed.dispatch();
   }
 
-  /** Publish a volume whose shared result follows the visible slice bounds. */
+  /** Publish a volume initialized from the visible slice bounds. */
   async addLayer() {
     if (!this.alive || this.busy) return;
     let input: PreparedAffinityInput | undefined;
@@ -498,16 +498,16 @@ export class WatershedSession extends RefCounted {
       entry.check();
       if (released) return;
       this.setStatus(
-        `Added live layer: ${layer.name}. One shared result follows all visible slice views as you navigate. Labels may change; settings are saved as a JSON recipe, not computed labels.`,
+        `Added live layer: ${layer.name}. The initial result covers the visible slices. Use Reseg in the Source tab to run again with the current view and settings.`,
       );
       // Constructor/publication/activation errors remain fatal. Once viewport
-      // tracking starts, computation failures may recover on the next box.
+      // tracking starts, computation failures may recover on Reseg.
       let computeErrorStatus: string | undefined;
       const reportComputeError = (error: unknown) => {
         if (released) return;
         entry!.check();
         if (released || !this.alive) return;
-        computeErrorStatus = `Watershed error (${layer!.name}): ${errorMessage(error)}. Adjust sidebar thresholds or navigate to retry; for an oversized region, zoom in or add a layer in WASM Watershed with a smaller halo or at a coarser native scale.`;
+        computeErrorStatus = `Watershed error (${layer!.name}): ${errorMessage(error)}. Use Reseg in the Source tab to retry. For an oversized region, zoom in before retrying, or add a layer with a smaller halo or at a coarser native scale.`;
         this.setStatus(computeErrorStatus, "error");
         this.changed.dispatch();
       };
@@ -540,15 +540,13 @@ export class WatershedSession extends RefCounted {
           if (released) return;
           entry!.check();
           if (released) return;
-          live!.setRegion(region?.lowerXYZ, region?.shapeXYZ);
+          live!.setViewport(region);
         },
         (error) => {
           if (released) return;
           entry!.check();
           if (released) return;
-          // Bad viewport geometry must not leave the previous labels visible.
-          live!.setRegion();
-          reportComputeError(error);
+          live!.setViewportError(error);
         },
       );
       // Initial callbacks may synchronously reset/delete the layer.
@@ -556,6 +554,8 @@ export class WatershedSession extends RefCounted {
         unwatch();
         return;
       }
+      if (unwatch.refresh !== undefined)
+        live.setViewportRefresh(unwatch.refresh);
       removers.push(unwatch);
       entry.check();
       if (released) return;
@@ -644,10 +644,10 @@ export class WatershedDialog extends FramedDialog {
       return element;
     };
     text(
-      "Add a segmentation with one shared result over the XYZ bounding box enclosing all visible slice views. As you navigate, a new box is computed after a 150 ms debounce, with the configured halo per face (default 8 native voxels) clipped to source bounds. UINT64 labels are fetched and rendered in chunks, not computed per display chunk; labels may change across navigation. This is not equivalent to whole-volume watershed.",
+      "Add a segmentation with one shared result over the XYZ bounding box enclosing all visible slice views. The initial box is computed automatically, with the configured halo per face (default 8 native voxels) clipped to source bounds. Navigation does not rerun segmentation. Use Reseg in the Source tab to segment the current view again. UINT64 labels are fetched and rendered in chunks, not computed per display chunk. This is not equivalent to whole-volume watershed.",
     );
     text(
-      "The computation is limited to 2**26 (67,108,864) voxels INCLUDING the halo. Oversized views report an error: zoom in or add a layer with a smaller halo or at a coarser native scale. Computation is never silently split. Hiding the output or removing all relevant slice views clears its result.",
+      "The computation is limited to 2**26 (67,108,864) voxels INCLUDING the halo. Oversized views report an error: zoom in and click Reseg, or add a layer with a smaller halo or at a coarser native scale. Computation is never silently split. Hiding and showing the output does not recompute it.",
     );
     text(
       "Affinities connect each voxel towards its negative axes (−X, −Y, −Z). Integer values are normalized by their data type maximum; floating-point values are unchanged. Non-native transforms and mutable Python volume sources are rejected.",

@@ -706,9 +706,11 @@ export class WatershedDataSourceProvider implements DataSourceProvider {
     return {
       state:
         recipe !== undefined && live !== undefined
-          ? new WatershedParametersState(recipe, (next) =>
-              live.setParameters(next.channelsXYZ, next.options, next.halo),
-            )
+          ? new WatershedParametersState(recipe, (next, resegment) => {
+              const { channelsXYZ, options, halo } = next;
+              if (resegment) live.resegment(channelsXYZ, options, halo);
+              else live.configureInitialRun(channelsXYZ, options, halo);
+            })
           : undefined,
       canonicalUrl:
         options.url === WATERSHED_RECIPE_URL

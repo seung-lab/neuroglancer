@@ -439,7 +439,7 @@ export class DataSourceView extends RefCounted {
         (next) => {
           if (this.parametersState === undefined)
             throw new Error("Watershed parameters are not ready");
-          this.parametersState.restoreState(next);
+          this.parametersState.resegment(next);
         },
       );
       this.element.insertBefore(widget.element, this.stateElement);
