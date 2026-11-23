@@ -736,6 +736,8 @@ try {
   for (const change of ["delete", "reset"]) {
     const pending = await open(stateUrl(makeState(recipe)), true);
     await pending.firstInput;
+    // Viewport warming can request input before the model worker loads.
+    await pending.page.waitForFunction(() => window.shareProbe.loads > 0);
     const waiting = await probe(pending.page);
     assert.equal(waiting.loads, 1);
     assert.equal(waiting.runs, 0, "source read is still held before inference");
