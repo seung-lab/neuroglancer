@@ -7,7 +7,11 @@ import http from "node:http";
 import path from "node:path";
 import { chromium } from "playwright";
 import { httpContentType } from "./http_content_type.mjs";
-import { installObserver } from "./pipeline_benchmark.mjs";
+import {
+  getRuntimeAssetUrls,
+  installObserver,
+  verifyRuntimeAssets,
+} from "./pipeline_benchmark.mjs";
 
 const root = path.resolve(process.env.DIST ?? "dist/client");
 const scene = JSON.parse(
@@ -47,6 +51,8 @@ const server = http.createServer(async (req, res) => {
 let browser;
 try {
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const baseUrl = `http://localhost:${server.address().port}/`;
+  const runtimeUrls = await getRuntimeAssetUrls(root, baseUrl);
   browser = await chromium.launch({
     executablePath: process.env.CHROME ?? "/usr/bin/google-chrome",
     headless: false,
@@ -64,13 +70,23 @@ try {
     deviceScaleFactor: 1,
   });
   await context.addInitScript(installObserver);
+  const runtimeAssets = [];
+  context.on("requestfinished", async (request) => {
+    const url = request.url();
+    if (!runtimeUrls.includes(url)) return;
+    const response = await request.response();
+    runtimeAssets.push({
+      url,
+      status: response?.status(),
+      contentType: response?.headers()["content-type"],
+    });
+  });
   const page = await context.newPage();
   const errors = [];
   page.on("pageerror", (error) => errors.push(String(error)));
-  await page.goto(
-    `http://localhost:${server.address().port}/#!${encodeURIComponent(JSON.stringify(scene))}`,
-    { waitUntil: "domcontentloaded" },
-  );
+  await page.goto(`${baseUrl}#!${encodeURIComponent(JSON.stringify(scene))}`, {
+    waitUntil: "domcontentloaded",
+  });
   await page.waitForFunction(
     () => window.__benchSnapshot?.().pendingRuns > 0,
     null,
@@ -154,6 +170,7 @@ try {
   }
   assert.deepEqual(errors, []);
   assert.deepEqual(result.snapshot.errors, []);
+  verifyRuntimeAssets(runtimeUrls, runtimeAssets);
   for (const worker of result.workers) {
     assert.equal(worker.metadata.actualProvider, "webgpu");
     assert.equal(worker.metadata.actualPrecision, "float16");
@@ -175,6 +192,7 @@ try {
     JSON.stringify(
       {
         passed: true,
+        runtimeAssets,
         baselineOutputHashesMatched: expectedHashes.length,
         ...result,
       },

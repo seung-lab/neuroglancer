@@ -195,10 +195,12 @@ for (const filename of files) {
       meta.actualPrecision !== "float16" ||
       meta.webgpuSubgroupMatrix !== true ||
       meta.threads !== 8 ||
-      meta.compatibilityFixes !== false
+      (meta.compatibilityFixes !== undefined &&
+        meta.compatibilityFixes !== false) ||
+      meta.preparation !== undefined
     ) {
       issues.push(
-        "runtime does not match isolated WebGPU FP16/subgroup/8-thread/unmodified-model benchmark",
+        "runtime does not match isolated WebGPU FP16/subgroup/8-thread benchmark without legacy graph rewrites",
       );
     }
     const configuredWorkers = sourceBuild?.info?.benchmark?.maxWebGpuWorkers;

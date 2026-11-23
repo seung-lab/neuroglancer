@@ -42,7 +42,6 @@ function syntheticRuns() {
         actualPrecision: "float16",
         webgpuSubgroupMatrix: true,
         threads: 8,
-        compatibilityFixes: false,
       },
       workerRunMsAll: { p50: 40 + index, sum: 1000 + 10 * index },
       zeroWorkersActiveMs: viewport - 1600,
@@ -279,6 +278,24 @@ test("incomplete stage is retained and rejected; measured zero GPU is not missin
       percentChange: null,
     },
   );
+});
+
+test("legacy metadata is accepted only when no rewrite was requested or applied", async () => {
+  const runs = syntheticRuns();
+  runs[0].inferenceStats.metadata.compatibilityFixes = false;
+  const good = await reduce({ baseline: runs });
+  assert.equal(good.status, 0);
+  assert.equal(good.summary.allValid, true);
+
+  runs[1].inferenceStats.metadata.compatibilityFixes = true;
+  runs[2].inferenceStats.metadata.preparation = "model6280000-jsep";
+  const bad = await reduce({ baseline: runs });
+  assert.equal(bad.status, 1);
+  assert.deepEqual(
+    bad.summary.stages.baseline.runs.map((r) => r.valid),
+    [true, false, false],
+  );
+  assert.match(bad.stderr, /without legacy graph rewrites/);
 });
 
 test("runtime fallback, browser errors, and empty GPU samples invalidate runs", async () => {

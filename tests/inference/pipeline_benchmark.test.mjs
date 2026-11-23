@@ -9,10 +9,72 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 import {
+  getRuntimeAssetUrls,
+  installObserver,
   runSingleBenchmark,
   startGpuSampler,
-  installObserver,
+  verifyRuntimeAssets,
 } from "./pipeline_benchmark.mjs";
+
+const assetDir = await fs.mkdtemp(path.join(os.tmpdir(), "pipeline-runtime-"));
+try {
+  const base = "http://localhost/app/";
+  const moduleFile = "ort-wasm-simd-threaded.asyncify.1234abc.mjs";
+  const wasmFile = "9876def.wasm";
+  await fs.writeFile(path.join(assetDir, moduleFile), "");
+  await fs.writeFile(path.join(assetDir, "0123abc.wasm"), "unrelated WASM");
+  await fs.copyFile(
+    fileURLToPath(
+      import.meta.resolve(
+        "onnxruntime-web/ort-wasm-simd-threaded.asyncify.wasm",
+      ),
+    ),
+    path.join(assetDir, wasmFile),
+  );
+  const bundledUrls = await getRuntimeAssetUrls(assetDir, base, "");
+  assert.deepEqual(bundledUrls, [base + moduleFile, base + wasmFile]);
+  const requests = [
+    {
+      url: bundledUrls[0],
+      status: 200,
+      contentType: "text/javascript; charset=utf-8",
+    },
+    { url: bundledUrls[1], status: 200, contentType: "application/wasm" },
+    {
+      url: base + "0123abc.wasm",
+      status: 200,
+      contentType: "application/wasm",
+    },
+    { url: bundledUrls[1], status: 200, failed: true },
+  ];
+  assert.deepEqual(
+    verifyRuntimeAssets(bundledUrls, requests),
+    requests.slice(0, 2),
+  );
+  assert.throws(
+    () =>
+      verifyRuntimeAssets(
+        bundledUrls,
+        requests.filter((r) => r !== requests[1]),
+      ),
+    /No successful native runtime response.*9876def\.wasm/,
+  );
+  const custom = "https://example.invalid/pinned/";
+  const customUrls = ["mjs", "wasm"].map(
+    (ext) => `${custom}ort-wasm-simd-threaded.asyncify.${ext}`,
+  );
+  assert.deepEqual(
+    await getRuntimeAssetUrls(assetDir, base, custom),
+    customUrls,
+  );
+  await fs.writeFile(
+    path.join(assetDir, "version.json"),
+    JSON.stringify({ benchmark: { runtime: custom } }),
+  );
+  assert.deepEqual(await getRuntimeAssetUrls(assetDir, base, ""), customUrls);
+} finally {
+  await fs.rm(assetDir, { recursive: true, force: true });
+}
 
 const invalidCli = spawnSync(
   process.execPath,
@@ -486,7 +548,7 @@ try {
     };
     await assert.rejects(
       runSingleBenchmark({
-        context: { newPage: async () => page },
+        context: { newPage: async () => page, on() {} },
         baseUrl: "http://example.invalid/",
         label: "no-gpu-test",
       }),

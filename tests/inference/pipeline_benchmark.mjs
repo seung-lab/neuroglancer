@@ -8,9 +8,8 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 // Resolve the project's existing Playwright installation even from an exported /tmp copy.
-const { chromium } = createRequire(path.resolve(process.cwd(), "package.json"))(
-  "playwright",
-);
+const require = createRequire(path.resolve(process.cwd(), "package.json"));
+const { chromium } = require("playwright");
 let BENCH_HASH;
 let expectedHashes;
 
@@ -59,6 +58,65 @@ async function startLocalServer(rootDir) {
   });
   const addr = server.address();
   return { server, baseUrl: `http://localhost:${addr.port}/` };
+}
+
+// Use the benchmark build stamp when present, or the package assets served by
+// a plain production build. A custom unstamped build can supply RUNTIME_BASE.
+async function getRuntimeAssetUrls(
+  dist,
+  baseUrl,
+  runtimeBase = process.env.RUNTIME_BASE,
+) {
+  if (!runtimeBase) {
+    try {
+      const info = JSON.parse(
+        await fs.readFile(path.join(dist, "version.json"), "utf8"),
+      );
+      runtimeBase = info.benchmark?.runtime;
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+  }
+  const stem = "ort-wasm-simd-threaded.asyncify";
+  if (runtimeBase) {
+    const base = new URL(runtimeBase, baseUrl);
+    return ["mjs", "wasm"].map((ext) => new URL(`${stem}.${ext}`, base).href);
+  }
+  const files = await fs.readdir(dist);
+  const modules = files.filter((name) =>
+    /^ort-wasm-simd-threaded\.asyncify\.[\da-f]+\.mjs$/.test(name),
+  );
+  assert.equal(modules.length, 1, "Expected one bundled Asyncify module");
+  // Rspack may emit just the WASM hash as its filename; do not count other WASM.
+  const packageWasm = await fs.readFile(
+    require.resolve(`onnxruntime-web/${stem}.wasm`),
+  );
+  const wasm = [];
+  for (const name of files.filter((name) =>
+    /^(?:ort-wasm-simd-threaded\.asyncify\.)?[\da-f]+\.wasm$/.test(name),
+  )) {
+    const bytes = await fs.readFile(path.join(dist, name));
+    if (packageWasm.equals(bytes)) wasm.push(name);
+  }
+  assert.equal(wasm.length, 1, "Expected one bundled Asyncify WASM asset");
+  return [modules[0], wasm[0]].map((name) => new URL(name, baseUrl).href);
+}
+
+function verifyRuntimeAssets(urls, requests) {
+  const successful = requests.filter((request) => {
+    if (!urls.includes(request.url) || request.status !== 200 || request.failed)
+      return false;
+    const mime = request.contentType?.split(";", 1)[0].trim();
+    return new URL(request.url).pathname.endsWith(".wasm")
+      ? mime === "application/wasm"
+      : /javascript|ecmascript/.test(mime ?? "");
+  });
+  for (const url of urls)
+    assert(
+      successful.some((request) => request.url === url),
+      `No successful native runtime response for ${url}: ${JSON.stringify(requests)}`,
+    );
+  return successful;
 }
 
 function startGpuSampler(intervalMs = 100) {
@@ -458,7 +516,7 @@ function installObserver() {
   };
 }
 
-async function runSingleBenchmark({ context, baseUrl, label }) {
+async function runSingleBenchmark({ context, baseUrl, label, runtimeUrls }) {
   const gpuSampler = startGpuSampler(100);
   const tBench0 = performance.now();
   const hostEpoch = Date.now();
@@ -493,7 +551,7 @@ async function runSingleBenchmark({ context, baseUrl, label }) {
       }
     });
 
-    page.on("request", (req) => {
+    context.on("request", (req) => {
       const t = performance.now() - tBench0;
       const url = req.url();
       reqStart.set(req, t);
@@ -513,16 +571,15 @@ async function runSingleBenchmark({ context, baseUrl, label }) {
       const tEnd = performance.now() - tBench0;
       const tStart = reqStart.get(req) ?? tEnd;
       const url = req.url();
-      let status = 0;
-      if (!failed) {
-        const resp = await req.response().catch(() => null);
-        status = resp?.status() ?? 0;
-      }
+      reqStart.delete(req);
+      const response = failed ? null : await req.response().catch(() => null);
+      const status = response?.status() ?? 0;
       if (url.includes("model300000.onnx")) {
         net.model.push({ tStart, tEnd, dur: tEnd - tStart, status, failed });
-      } else if (url.includes("ort-wasm")) {
+      } else if (runtimeUrls.includes(url)) {
         net.ort.push({
-          name: url.split("/").pop(),
+          url,
+          contentType: response?.headers()["content-type"],
           tStart,
           tEnd,
           dur: tEnd - tStart,
@@ -545,8 +602,8 @@ async function runSingleBenchmark({ context, baseUrl, label }) {
         }
       }
     };
-    page.on("requestfinished", (req) => void finishReq(req, false));
-    page.on("requestfailed", (req) => void finishReq(req, true));
+    context.on("requestfinished", (req) => void finishReq(req, false));
+    context.on("requestfailed", (req) => void finishReq(req, true));
 
     const tGotoStart = performance.now() - tBench0;
     await page.goto(baseUrl + BENCH_HASH, {
@@ -832,8 +889,10 @@ async function runSingleBenchmark({ context, baseUrl, label }) {
       initialProbe.timeOrigin - hostEpoch + firstRunSent;
     const infGpuWindowEnd = initialProbe.timeOrigin - hostEpoch + lastRunRecv;
 
+    const ort = verifyRuntimeAssets(runtimeUrls, net.ort);
     return {
       label,
+      runtimeAssets: net.ort,
       outputHashes,
       outputShapes: initialProbe.outputShapes.sort((a, b) =>
         a.grid.localeCompare(b.grid),
@@ -860,14 +919,12 @@ async function runSingleBenchmark({ context, baseUrl, label }) {
         modelFetchDur: net.model[0]
           ? Number(net.model[0].dur.toFixed(1))
           : null,
-        ortFetchDur: net.ort.length
-          ? Number(
-              (
-                Math.max(...net.ort.map((o) => o.tEnd)) -
-                Math.min(...net.ort.map((o) => o.tStart))
-              ).toFixed(1),
-            )
-          : null,
+        ortFetchDur: Number(
+          (
+            Math.max(...ort.map((o) => o.tEnd)) -
+            Math.min(...ort.map((o) => o.tStart))
+          ).toFixed(1),
+        ),
         workerSpawnAt: infWorkers[0]
           ? Number(infWorkers[0].spawnAt.toFixed(1))
           : null,
@@ -1037,12 +1094,12 @@ async function main() {
   const outPath =
     process.env.BENCH_OUT ?? "/tmp/ng-integration-bench/results.json";
   await fs.mkdir(path.dirname(outPath), { recursive: true });
-  const localServer = await startLocalServer(
-    path.resolve(process.env.DIST ?? "dist/client"),
-  );
+  const dist = path.resolve(process.env.DIST ?? "dist/client");
+  const localServer = await startLocalServer(dist);
   let browser;
   const results = [];
   try {
+    const runtimeUrls = await getRuntimeAssetUrls(dist, localServer.baseUrl);
     for (let i = 0; i < runCount; i++) {
       browser = await chromium.launch({
         executablePath: process.env.CHROME ?? "/usr/bin/google-chrome",
@@ -1067,6 +1124,7 @@ async function main() {
           context,
           baseUrl: localServer.baseUrl,
           label: `${process.env.LABEL ?? "local"}-cold-${i + 1}`,
+          runtimeUrls,
         }),
       );
       await browser.close();
@@ -1098,7 +1156,13 @@ async function main() {
   }
 }
 
-export { installObserver, runSingleBenchmark, startGpuSampler };
+export {
+  getRuntimeAssetUrls,
+  installObserver,
+  runSingleBenchmark,
+  startGpuSampler,
+  verifyRuntimeAssets,
+};
 if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href
