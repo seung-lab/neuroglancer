@@ -91,6 +91,7 @@ export interface SliceViewSegmentationDisplayState
     RenderLayerBaseOptions {
   selectedAlpha: WatchableValueInterface<number>;
   notSelectedAlpha: WatchableValueInterface<number>;
+  tempNotSelectedAlpha2d: WatchableValueInterface<number | undefined>;
   hideSegmentZero: WatchableValueInterface<boolean>;
   ignoreNullVisibleSet: WatchableValueInterface<boolean>;
 }
@@ -263,6 +264,11 @@ export class SegmentationRenderLayer extends SliceViewVolumeRenderLayer<ShaderPa
       displayState.notSelectedAlpha.changed.add(this.redrawNeeded.dispatch),
     );
     this.registerDisposer(
+      displayState.tempNotSelectedAlpha2d.changed.add(
+        this.redrawNeeded.dispatch,
+      ),
+    );
+    this.registerDisposer(
       displayState.ignoreNullVisibleSet.changed.add(this.redrawNeeded.dispatch),
     );
   }
@@ -401,7 +407,8 @@ uint64_t getMappedObjectId(uint64_t value) {
     );
     gl.uniform1f(
       shader.uniform("uNotSelectedAlpha"),
-      displayState.notSelectedAlpha.value,
+      displayState.tempNotSelectedAlpha2d.value ??
+        displayState.notSelectedAlpha.value,
     );
     const showAllSegments =
       visibleSegments.hashTable.size === 0 && ignoreNullSegmentSet;

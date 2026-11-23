@@ -684,6 +684,7 @@ class SegmentationUserLayerDisplayState implements SegmentationDisplayState {
   selectedAlpha = trackableAlphaValue(0.5);
   saturation = trackableAlphaValue(1.0);
   notSelectedAlpha = trackableAlphaValue(0);
+  tempNotSelectedAlpha2d = new WatchableValue<number | undefined>(undefined);
   hoverHighlight = new TrackableBoolean(true, true);
   silhouetteRendering = new TrackableValue<number>(
     0,

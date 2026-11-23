@@ -2769,6 +2769,7 @@ class MulticutSegmentsTool extends LayerTool<SegmentationUserLayer> {
       displayState.useTempSegmentStatedColors2d.value = false;
       displayState.tempSegmentStatedColors2d.value.clear(); // TODO, should only clear those that are in temp sets
       displayState.tempSegmentDefaultColor2d.value = undefined;
+      displayState.tempNotSelectedAlpha2d.value = undefined;
       displayState.highlightColor.value = undefined;
     };
     const { segmentSelectionState } = layer.displayState;
@@ -2819,6 +2820,8 @@ class MulticutSegmentsTool extends LayerTool<SegmentationUserLayer> {
       }
       // set colors
       displayState.tempSegmentDefaultColor2d.value = MULTICUT_OFF_COLOR;
+      // Use the preview color's alpha even when the user's Off opacity is zero.
+      displayState.tempNotSelectedAlpha2d.value = 1;
       displayState.tempSegmentStatedColors2d.value.set(
         focusSegment,
         TRANSPARENT_COLOR_PACKED,

@@ -36,6 +36,7 @@ import { type Disposer, invokeDisposers } from "#src/util/disposable.js";
 import { vec3, vec4 } from "#src/util/geom.js";
 import { Viewer } from "#src/viewer.js";
 import { ShaderCompilationError } from "#src/webgl/shader.js";
+import { glsl_uint64 } from "#src/webgl/shader_lib.js";
 import { FragmentShaderTester } from "#src/webgl/shader_testing.js";
 import {
   ShaderControlState,
@@ -126,6 +127,96 @@ const expectColor = (
   expect(color!.length).toBe(4);
   expect([...color]).toEqual(expected.map((x) => expect.closeTo(x)));
 };
+
+it("overrides 2D Off opacity during a multicut preview", () => {
+  const userLayer = setupSegmentationLayer();
+  const { displayState } = userLayer;
+  displayState.ignoreNullVisibleSet.value = false;
+  displayState.segmentDefaultColor.value = vec3.fromValues(0, 0, 0);
+  displayState.selectedAlpha.value = 0.8;
+
+  const gl = userLayer.manager.chunkManager.chunkQueueManager.gl;
+  const tester = new FragmentShaderTester(
+    gl,
+    { isVisible: "bool" },
+    { outputAlpha: "float" },
+  );
+  const binding = { disposers: [] as Disposer[] };
+  try {
+    const parameters = {
+      segmentColorParameters:
+        displayState.segmentationColorUserShader.shaderParameters.value,
+      segmentColorProperties: [],
+      shaderBuilderState:
+        displayState.segmentColorShaderControlState.builderState.value,
+      hasEquivalences: false,
+      baseSegmentColoring: false,
+      baseSegmentHighlighting: false,
+      hideSegmentZero: false,
+      hasHighlightColor: false,
+      isVoxelEditingPreview: false,
+    };
+    const layer = {
+      gl,
+      displayState,
+      segmentationGroupState: displayState.segmentationGroupState.value,
+      hashTableManager: {
+        defineShader: () => {},
+        hasFunctionName: "isVisibleSegment",
+        enable: () => {},
+      },
+    } as unknown as SegmentationRenderLayer;
+    const sliceView = {
+      visibleLayers: new Map([[layer, binding]]),
+    } as unknown as SliceView;
+    tester.builder.addFragmentCode(glsl_uint64);
+    tester.builder.addFragmentCode(`
+uint64_t getDataValue() { return uint64_t(uvec2(1u, 0u)); }
+bool isVisibleSegment(uint64_t value) { return isVisible; }
+void emit(vec4 color) { outputAlpha = color.a; }
+`);
+    SegmentationRenderLayer.prototype.defineShader.call(
+      layer,
+      tester.builder,
+      parameters,
+    );
+    tester.build();
+    const renderAlpha = (isVisible = false) => {
+      tester.shader.bind();
+      SegmentationRenderLayer.prototype.initializeShader.call(
+        layer,
+        sliceView,
+        tester.shader,
+        parameters,
+        false,
+      );
+      tester.execute({ isVisible });
+      return tester.values.outputAlpha;
+    };
+
+    expect(renderAlpha()).toBe(0);
+    displayState.tempSegmentDefaultColor2d.value = vec4.fromValues(
+      0,
+      0,
+      0,
+      0.5,
+    );
+    displayState.tempNotSelectedAlpha2d.value = 1;
+    expect(renderAlpha()).toBeCloseTo(0.5);
+    expect(renderAlpha(true)).toBeCloseTo(0.4);
+
+    displayState.notSelectedAlpha.value = 0.25;
+    expect(renderAlpha()).toBeCloseTo(0.5);
+
+    displayState.tempSegmentDefaultColor2d.value = undefined;
+    displayState.tempNotSelectedAlpha2d.value = undefined;
+    expect(renderAlpha()).toBeCloseTo(0.25);
+    expect(renderAlpha(true)).toBeCloseTo(0.8);
+  } finally {
+    invokeDisposers(binding.disposers);
+    tester.dispose();
+  }
+});
 
 describe("segment-color active controls", () => {
   const shaderWithControls = `
